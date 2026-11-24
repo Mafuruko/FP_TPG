@@ -13,8 +13,10 @@
 <body>
   <main class="gu pixel">
     <canvas id="island" aria-label="Interactive island map" aria-describedby="controls"></canvas>
+    <div id="atmosphere-veil" aria-hidden="true"></div>
     <div id="drop-action" role="status" hidden><img width="16" height="16" alt=""><span></span></div>
     <div id="studio-hud"></div>
+    <div id="hud-windows" class="hud-windows-layer" aria-label="HUD windows"></div>
     <section id="panel" class="panel gu-panel" aria-labelledby="panel-title" hidden>
       <div class="panel-heading">
         <h2 id="panel-title" class="gu-title" tabindex="-1"></h2>
@@ -26,14 +28,29 @@
       <div id="panel-content"></div>
     </section>
     <div class="bottom">
-      <button type="button" id="debug" class="gu-btn s" aria-pressed="false" aria-controls="debug-panel">Debug</button>
-      <p id="controls">Drag to pan · Scroll to zoom · Hold and drag a villager to give them a job</p>
+      <button type="button" id="debug" class="gu-btn s" aria-pressed="false" aria-controls="debug-panel" data-tip="Toggle Dev Mode & Debugger">Dev Mode</button>
+      <p id="controls">Drag or 2-finger scroll to pan · Pinch or wheel to zoom · Hold and drag a villager to assign</p>
     </div>
-    <section id="debug-panel" class="panel gu-panel debug" aria-label="Developer tools" hidden>
-      <h2>Developer tools</h2>
-      <div id="overlays"></div>
-      <p>Collectibles on the map are previews.</p>
-      <pre id="inspector"></pre>
+    <section id="debug-panel" class="panel gu-panel debug" aria-label="Dev Mode and Debugger" hidden>
+      <div class="dev-header">
+        <h2 class="gu-title">Dev Mode</h2>
+        <div class="dev-tabs" role="tablist" aria-label="Dev Mode sections">
+          <button type="button" class="gu-btn g dev-tab" data-dev-tab="actions" aria-selected="true">Actions</button>
+          <button type="button" class="gu-btn s dev-tab" data-dev-tab="overlays" aria-selected="false">Overlays</button>
+          <button type="button" class="gu-btn s dev-tab" data-dev-tab="inspector" aria-selected="false">Inspector</button>
+        </div>
+      </div>
+      <div id="dev-tab-actions" class="dev-pane">
+        <div id="dev-actions"></div>
+      </div>
+      <div id="dev-tab-overlays" class="dev-pane" hidden>
+        <div id="overlays"></div>
+        <p class="dev-note">Collectibles shown in Dev Mode include static previews.</p>
+      </div>
+      <div id="dev-tab-inspector" class="dev-pane" hidden>
+        <p class="dev-note">Click any map tile, object, or villager to inspect.</p>
+        <pre id="inspector"></pre>
+      </div>
     </section>
     <div id="title-screen" hidden></div>
   </main>

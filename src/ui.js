@@ -3,7 +3,10 @@ import { tileToWorld, walkable, worldToTile } from './geometry.js';
 import { debugOptions, svgUrl } from './render.js';
 import { abilities } from './world.js';
 import { construction, costLabel, landmarks, researchProjects } from './progression.js';
-import { skillProgress, villagerQuirks, villagerSkills } from './villagers.js';
+import { needStatus, skillProgress, villagerQuirks, villagerSkills } from './villagers.js';
+import { bindSmartTooltips } from './tooltips.js';
+import { createHudWindowManager } from './hud-windows.js';
+import { renderDevActionsHtml, runDevAction } from './dev-tools.js';
 
 const element = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char =>
@@ -18,9 +21,49 @@ const panelIcons = {
   villagers: 'villagers', buildings: 'build', research: 'research', collection: 'book',
   settings: 'gear', save: 'save', achievements: 'trophy', notifications: 'info', pause: 'pause', journal: 'book',
 };
+const researchIcons = {
+  heal: 'health', farm: 'hunger', fish: 'discovery', advanced_construction: 'build', ancient_knowledge: 'knowledge',
+};
+const collectionTabs = [
+  ['seashell', 'Shells'],
+  ['mineral', 'Minerals'],
+  ['artifact', 'Artifacts'],
+  ['butterfly', 'Butterflies'],
+];
 const audioStorageKey = 'island-colony.audio';
 const minimumMusicVolume = 1;
 const maximumMusicVolume = 100;
+
+const RESOURCES_TAB_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14" width="14" height="14" shape-rendering="crispEdges" aria-hidden="true">
+  <path fill="#3b2a22" d="M2 3h10v9H2z"/>
+  <path fill="#c89456" d="M3 4h8v7H3z"/>
+  <path fill="#8e6032" d="M3 7h8v1H3zm3-3h2v7H6z"/>
+  <path fill="#f0d28b" d="M4 5h2v1H4zm4 0h2v1H8z"/>
+</svg>`;
+
+/**
+ * Pixel-art crisp SVG icons matching the warm wood/parchment studio palette (#3b2a22 outline):
+ * - health: heart
+ * - hunger: crossed fork & spoon
+ * - energy: lightning bolt
+ */
+export const NEED_ICONS = {
+  health: `<svg class="need-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14" width="14" height="14" shape-rendering="crispEdges" aria-hidden="true">
+    <path fill="#3b2a22" d="M3 2h3v1h2V2h3v1h1v1h1v3h-1v2h-1v1h-1v1H9v1H8v1H6v-1H5v-1H4v-1H3V9H2V7H1V4h1V3h1z"/>
+    <path fill="#d94e45" d="M3 3h3v1h2V3h3v1h1v3h-1v2h-1v1H9v1H8v1H6v-1H5v-1H4V9H3V7H2V4h1z"/>
+    <path fill="#f79c8e" d="M3 4h2v1H4v1H3z"/>
+  </svg>`,
+  hunger: `<svg class="need-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14" width="14" height="14" shape-rendering="crispEdges" aria-hidden="true">
+    <path fill="#3b2a22" d="M2 1h1v2h1V1h1v2h1v3H5v1h2v1h1V6h1V2h2v1h1v3h-1v1H9v1h1v1h1v1h1v2h-2v-1H9v-1H8V9H6v1H5v1H4v1H2v-2h1V9h1V8h1V7H3V6H2V1z"/>
+    <path fill="#e7dec8" d="M3 2h1v2H3V2zm2 0h1v2H5V2zM3 4h3v2H3V4zm7-1h1v3h-1V3z"/>
+    <path fill="#c89e64" d="M5 6h2v2H5V6zm2 1h2v2H7V7zm-2 2h1v1H4v1H3v-1h1V9h1zm4 0h1v1h1v1h-1v-1H9V9z"/>
+  </svg>`,
+  energy: `<svg class="need-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14" width="14" height="14" shape-rendering="crispEdges" aria-hidden="true">
+    <path fill="#3b2a22" d="M7 1h4v2h-1v2h2v2h-1v1h-1v1H9v1H8v2H6v1H4v-3h1V8H3V6h1V5h1V3h1V2h1z"/>
+    <path fill="#f2c444" d="M7 2h3v1H9v2H8v1h3v1h-1v1H9v1H8v1H7v1H5v-2h1V7H4V6h1V5h1V3h1z"/>
+    <path fill="#fff4b8" d="M7 3h1v2H7V3zM6 6h2v1H6V6z"/>
+  </svg>`,
+};
 
 function clampMusicVolume(volume) {
   return Math.max(minimumMusicVolume, Math.min(maximumMusicVolume, volume));
@@ -32,6 +75,13 @@ function readAudioSettings() {
   } catch {
     return {};
   }
+}
+
+function formatClockTime(minutes) {
+  const m = ((Math.floor(minutes) % 1440) + 1440) % 1440;
+  const hh = String(Math.floor(m / 60)).padStart(2, '0');
+  const mm = String(m % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
 }
 
 export function musicTrack({ time, weather }) {
@@ -48,8 +98,12 @@ export function createUI(world, view, actions) {
   const panel = element('panel');
   const content = element('panel-content');
   const hud = element('studio-hud');
+  const hudWindowsLayer = element('hud-windows');
+  const debugPanel = element('debug-panel');
   const title = element('title-screen');
   const audio = new Audio();
+  let storage = null;
+  try { storage = window.localStorage; } catch { /* Ignore storage unavailability. */ }
   const preferences = readAudioSettings();
   if (Number.isInteger(preferences.musicVolume)) {
     state.settings.musicVolume = clampMusicVolume(preferences.musicVolume);
@@ -57,14 +111,23 @@ export function createUI(world, view, actions) {
   let menu = null;
   let collectionDetail = null;
   let collectionTab = 'seashell';
+  let buildingFilter = 'buildable';
   let buildingType = 'house';
   let buildingState = 'completed';
+  let buildingSitePage = 0;
+  let villagerPage = 0;
+  let journalPage = 0;
+  let notesPage = 0;
+  let devTab = 'actions';
+  let devActionPage = 0;
   let noticeTimer;
   let track = null;
   let autoplayBlocked = false;
   let playbackFailed = false;
   let pendingPlay = null;
-  let lastConditions;
+  let lastClockVisualKey = null;
+  let lastClockDay = null;
+  let lastClockMinute = null;
   let lastSpeed;
   let lastPaused;
   let lastPopulation;
@@ -93,19 +156,86 @@ export function createUI(world, view, actions) {
     return `<img src="${url}" width="${asset.width * scale}" height="${asset.height * scale}" alt="">`;
   };
   hud.innerHTML = GameUI.renderGameHUD(hudState(), { resources });
-  const counters = [...hud.querySelectorAll('.gu-res .gu-ctr')];
+  const topPanels = [...hud.querySelectorAll('.gu-top > .gu-panel')];
+  const resourcePanel = topPanels[0];
+  const timePanel = topPanels.at(-1);
+  const counters = [...resourcePanel.querySelectorAll('.gu-res .gu-ctr')];
   resources.forEach((resource, index) => { counters[index].setAttribute('aria-label', resource.tip); });
   counters.at(-1).setAttribute('aria-label', 'Population and housing capacity');
-  const timePanel = hud.querySelector('.gu-top > .gu-panel:last-child');
   const selection = hud.querySelector('.gu-sel');
   const toasts = hud.querySelector('.gu-toasts');
   const nav = hud.querySelector('.gu-nav');
-  const focusButton = hud.querySelector('[data-act="cam"][data-arg="focus"]');
+  const cameraPanel = hud.querySelector('.gu-br > .gu-panel') || hud.querySelector('.gu-br');
+  const focusButton = cameraPanel.querySelector('[data-act="cam"][data-arg="focus"]');
   selection.replaceChildren();
+  hud.querySelector('.gu-top')?.remove();
+  hud.querySelector('.gu-br')?.remove();
   element('close-panel').innerHTML = ic('close', 16);
+
+  // Build modular floating, resizable, viewport-clamped, mergeable HUD windows.
+  const hudWindows = createHudWindowManager(hudWindowsLayer, [
+    {
+      id: 'resources',
+      element: resourcePanel,
+      title: () => 'Resources',
+      shortTitle: () => 'Resources',
+      iconHtml: () => RESOURCES_TAB_ICON,
+      isVisible: () => true,
+    },
+    {
+      id: 'clock',
+      element: timePanel,
+      title: () => 'Clock & Speed',
+      shortTitle: () => 'Clock',
+      iconHtml: () => ic('clock', 14),
+      isVisible: () => true,
+    },
+    {
+      id: 'nav',
+      element: nav,
+      title: () => 'Menu Bar',
+      shortTitle: () => '',
+      mergedTitle: () => 'Menu',
+      iconHtml: () => ic('book', 14),
+      isVisible: () => true,
+    },
+    {
+      id: 'menu',
+      element: panel,
+      title: () => names[menu] || 'Panel',
+      shortTitle: () => names[menu] || 'Panel',
+      iconHtml: () => ic(panelIcons[menu] || 'info', 14),
+      isVisible: () => Boolean(menu),
+    },
+    {
+      id: 'selection',
+      element: selection,
+      title: () => 'Selected Villager',
+      shortTitle: () => 'Selected',
+      iconHtml: () => ic('villagers', 14),
+      isVisible: () => Boolean(view.selectedVillager && selection.childElementCount),
+    },
+    {
+      id: 'camera',
+      element: cameraPanel,
+      title: () => 'Camera Controls',
+      shortTitle: () => 'Camera',
+      iconHtml: () => ic('zoomin', 14),
+      isVisible: () => true,
+    },
+    {
+      id: 'dev',
+      element: debugPanel,
+      title: () => 'Dev Mode',
+      shortTitle: () => 'Dev Mode',
+      iconHtml: () => ic('gear', 14),
+      isVisible: () => Boolean(view.debug),
+    },
+  ], storage);
+
   world.resources.subscribe((key, value) => {
     counters[resources.findIndex(resource => resource.id === key)].querySelector('span').textContent = value;
-    if (menu === 'research' && key === 'knowledge') renderMenu();
+    if ((menu === 'research' && key === 'knowledge') || menu === 'buildings') renderMenu();
   });
 
   function notify(text) {
@@ -171,17 +301,45 @@ export function createUI(world, view, actions) {
   window.addEventListener('click', startMusic);
   window.addEventListener('keydown', startMusic);
 
+  let clockDayNode = null;
+  let clockTimeNode = null;
+  function bindClockNodes() {
+    const bolds = timePanel.firstElementChild?.querySelectorAll('b');
+    clockDayNode = bolds?.[0] || null;
+    clockTimeNode = bolds?.[1] || null;
+  }
+  bindClockNodes();
+
   function refreshStatus() {
     const { time, weather } = state;
-    const text = [time.day, Math.floor(time.minutes), weather.current].join('|');
+    const wholeMinute = Math.floor(time.minutes);
+    const isDay = wholeMinute >= 360 && wholeMinute < 1140;
+    const visualKey = `${isDay ? 'd' : 'n'}|${weather.current}`;
     const speed = time.paused ? 0 : time.speed;
-    if (text !== lastConditions) {
-      lastConditions = text;
+
+    // Only rebuild the timeBox SVG DOM when Day/Night or Clear/Rain actually changes.
+    if (visualKey !== lastClockVisualKey) {
+      lastClockVisualKey = visualKey;
+      lastClockDay = time.day;
+      lastClockMinute = wholeMinute;
       const clock = document.createElement('div');
       clock.innerHTML = timeBox(hudState());
       timePanel.firstElementChild.replaceWith(clock.firstElementChild);
+      bindClockNodes();
       syncMusic();
+      hudWindows.syncWidget('clock');
+    } else if (wholeMinute !== lastClockMinute || time.day !== lastClockDay) {
+      // Fast zero-reflow in-place text update on normal minute ticks.
+      if (time.day !== lastClockDay) {
+        lastClockDay = time.day;
+        if (clockDayNode) clockDayNode.textContent = `Day ${time.day}`;
+      }
+      if (wholeMinute !== lastClockMinute) {
+        lastClockMinute = wholeMinute;
+        if (clockTimeNode) clockTimeNode.textContent = formatClockTime(wholeMinute);
+      }
     }
+
     if (lastSpeed !== speed) {
       lastSpeed = speed;
       timePanel.querySelectorAll('[data-act="speed"]').forEach(button => {
@@ -210,6 +368,7 @@ export function createUI(world, view, actions) {
       if (view.selectedVillager && !state.villagers.some(villager => villager.id === view.selectedVillager)) {
         view.selectedVillager = null;
         selection.replaceChildren();
+        hudWindows.refresh();
       }
       if (['villagers', 'journal', 'buildings', 'research', 'collection', 'achievements'].includes(menu)) renderMenu();
     }
@@ -219,69 +378,307 @@ export function createUI(world, view, actions) {
     return img(assets.villager.svg({ config: { ...villager.appearance, name: villager.name, lifeStage: villager.lifeStage } }), css);
   }
 
+  function renderPager(page, totalPages, act) {
+    if (totalPages <= 1) return '';
+    return `<div class="pager-bar">
+      <button type="button" class="gu-btn s pager-btn" data-act="${act}" data-arg="${Math.max(0, page - 1)}" ${page <= 0 ? 'disabled' : ''}>‹ Prev</button>
+      <span class="pager-count">${page + 1} / ${totalPages}</span>
+      <button type="button" class="gu-btn s pager-btn" data-act="${act}" data-arg="${Math.min(totalPages - 1, page + 1)}" ${page >= totalPages - 1 ? 'disabled' : ''}>Next ›</button>
+    </div>`;
+  }
+
+  function renderNeedRow(key, tipLabel) {
+    return `<div class="need-bar-item" data-need="${key}" data-tip="${tipLabel}" aria-label="${tipLabel}">
+      ${NEED_ICONS[key]}
+      <div class="need-bar-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" aria-label="${tipLabel}">
+        <div class="need-bar-fill" data-tone="good" style="width:100%"></div>
+      </div>
+    </div>`;
+  }
+
   function renderVillagers() {
     const selected = state.villagers.find(villager => villager.id === view.selectedVillager);
-    const profile = selected ? `<div class="row">${portrait(selected, 'portrait')}<div><h3>${escape(selected.name)}</h3>
-      <p>${escape(selected.lifeStage)} · Age <span id="villager-age">${selected.age}</span></p><p id="villager-task"></p>
-      <p id="villager-needs"></p>
-      <p class="villager-quirks">${(selected.quirks || []).map(quirk => escape(villagerQuirks[quirk])).join(' · ')}</p>
-      <div class="villager-skills" aria-label="Skills">${Object.entries(villagerSkills).map(([key, skill]) => `
-        <div class="villager-skill" data-skill="${key}">
-          <span>${skill.label}</span><b class="skill-rank"></b>
-          <progress max="1" value="0" aria-label="${skill.label} experience"></progress><small></small>
+    const profile = selected ? `<div class="villager-card">
+      <div class="villager-card-top">
+        ${portrait(selected, 'portrait')}
+        <div class="villager-card-meta">
+          <div class="villager-card-head">
+            <h3>${escape(selected.name)}</h3>
+            <span class="villager-age-chip">${escape(selected.lifeStage)} · <span id="villager-age">${selected.age}</span></span>
+          </div>
+          <p class="villager-task-line" id="villager-task"></p>
+          <p class="villager-quirks">${(selected.quirks || []).map(quirk => escape(villagerQuirks[quirk])).join(' · ')}</p>
+          <div class="villager-needs-bars" id="villager-needs" aria-label="Villager needs">
+            ${renderNeedRow('health', 'Health')}
+            ${renderNeedRow('hunger', 'Fed')}
+            ${renderNeedRow('energy', 'Energy')}
+          </div>
+        </div>
+      </div>
+      <div class="villager-skills-grid" aria-label="Skills">${Object.entries(villagerSkills).map(([key, skill]) => `
+        <div class="villager-skill-pill" data-skill="${key}">
+          <span class="skill-label">${skill.label}</span>
+          <b class="skill-rank" data-tier="0"></b>
         </div>`).join('')}</div>
-      ${selected.relationships.children?.length ? `<p>Children: ${selected.relationships.children.length}</p>` : ''}
-      ${btn('Stop work', { v: 's', act: 'stop-work' })}</div></div>` : '';
-    return profile + `<div class="entries">${state.villagers.map(villager =>
+      <div class="villager-card-foot">
+        ${selected.relationships.children?.length ? `<span class="villager-children">Children: ${selected.relationships.children.length}</span>` : '<span></span>'}
+        ${btn('Stop work', { v: 's', act: 'stop-work' })}
+      </div>
+    </div>` : '';
+
+    const perPage = 6;
+    const totalPages = Math.max(1, Math.ceil(state.villagers.length / perPage));
+    villagerPage = Math.max(0, Math.min(totalPages - 1, villagerPage));
+    const slice = state.villagers.slice(villagerPage * perPage, villagerPage * perPage + perPage);
+
+    return profile + `<div class="entries villager-roster">${slice.map(villager =>
       `<button class="gu-btn s entry" data-villager="${villager.id}" aria-pressed="${selected === villager}">
-      ${portrait(villager, 'thumb')}${escape(villager.name)}</button>`).join('')}</div>`;
+      ${portrait(villager, 'thumb')}<span>${escape(villager.name)}</span></button>`).join('')}</div>${renderPager(villagerPage, totalPages, 'vil-page')}`;
   }
 
   function renderBuildings() {
-    const definition = assets.buildings.find(building => building.type === buildingType);
+    const buildableList = assets.buildings.filter(b => Boolean(construction[b.type]));
+    const list = buildingFilter === 'buildable' ? buildableList : assets.buildings;
+    if (!list.some(b => b.type === buildingType)) {
+      buildingType = list[0].type;
+      const states = list[0].states;
+      buildingState = states.completed ? 'completed' : Object.keys(states)[0];
+    }
+    const definition = list.find(b => b.type === buildingType) || list[0];
+    const stateKeys = Object.keys(definition.states);
+    if (!definition.states[buildingState]) {
+      buildingState = definition.states.completed ? 'completed' : stateKeys[0];
+    }
     const asset = definition.states[buildingState];
     const cost = construction[definition.type];
-    return `<div class="row"><label>Building <select class="gu-in" id="building-type">${assets.buildings.map(building =>
-      `<option value="${building.type}" ${definition === building ? 'selected' : ''}>${escape(building.name)}</option>`).join('')}</select></label>
-      <label>State <select class="gu-in" id="building-state">${Object.keys(definition.states).map(key =>
-      `<option ${key === buildingState ? 'selected' : ''}>${escape(key)}</option>`).join('')}</select></label></div>
-      ${img(asset.svg(), 'building-preview')}
-      <p>Footprint ${asset.footprint.width} × ${asset.footprint.height} tiles</p>
-      <p>${escape(asset.metadata.purpose)}</p>
-      ${cost ? `<p>Materials: ${costLabel(cost)}</p>
-      <button class="gu-btn p" type="button" data-placement="${definition.type}">${ic('build', 16)} Place foundation</button>` : '<p>Available to inspect in the gallery.</p>'}
-      ${state.buildings.length ? `<h3 class="gu-h">Village buildings</h3><ul>${state.buildings.map(site =>
-        `<li>${escape(assets.buildings.find(building => building.type === site.type).name)} · ${site.progress * 25}%</li>`).join('')}</ul>` : ''}`;
+    const canAfford = cost ? world.resources.canAfford(cost) : false;
+
+    const sitesPerPage = 4;
+    const totalSitePages = Math.max(1, Math.ceil(state.buildings.length / sitesPerPage));
+    buildingSitePage = Math.max(0, Math.min(totalSitePages - 1, buildingSitePage));
+    const siteSlice = state.buildings.slice(buildingSitePage * sitesPerPage, buildingSitePage * sitesPerPage + sitesPerPage);
+
+    return `<div class="compact-toolbar">
+      <div class="compact-tabs" role="tablist">
+        <button type="button" class="gu-btn ${buildingFilter === 'buildable' ? 'g' : 's'} compact-tab" data-act="bld-filter" data-arg="buildable">Build (${buildableList.length})</button>
+        <button type="button" class="gu-btn ${buildingFilter === 'all' ? 'g' : 's'} compact-tab" data-act="bld-filter" data-arg="all">Gallery (${assets.buildings.length})</button>
+      </div>
+      <span class="compact-meta-badge">Sites: ${state.buildings.length}</span>
+    </div>
+    <div class="compact-card bld-card">
+      <div class="bld-card-top">
+        <div class="bld-preview-box">${img(asset.svg(), 'bld-thumb')}</div>
+        <div class="bld-card-meta">
+          <div class="bld-card-head">
+            <h3>${escape(definition.name)}</h3>
+            <span class="compact-chip">${asset.footprint.width}×${asset.footprint.height}</span>
+          </div>
+          <p class="compact-desc">${escape(asset.metadata.purpose)}</p>
+          <div class="bld-state-pills">${stateKeys.map(key =>
+            `<button type="button" class="state-chip ${key === buildingState ? 'is-active' : ''}" data-act="bld-state" data-arg="${key}">${escape(key)}</button>`).join('')}</div>
+        </div>
+      </div>
+      <div class="bld-card-foot">
+        <span class="compact-cost ${cost && !canAfford ? 'is-short' : ''}">${cost ? costLabel(cost) : 'Gallery preview only'}</span>
+        ${cost ? `<button class="gu-btn ${canAfford ? 'p' : 's'} compact-cta" type="button" data-placement="${definition.type}">${ic('build', 14)} Place</button>` : ''}
+      </div>
+    </div>
+    <div class="bld-picker-grid">${list.map(b => `
+      <button type="button" class="gu-btn ${b.type === definition.type ? 'g' : 's'} bld-pick-btn" data-act="bld-select" data-arg="${b.type}">
+        <span class="bld-pick-name">${escape(b.name)}</span>
+        ${construction[b.type] ? `<small class="bld-pick-tag">${construction[b.type].wood}W · ${construction[b.type].stone}S</small>` : '<small class="bld-pick-tag">View</small>'}
+      </button>`).join('')}</div>
+    ${state.buildings.length ? `<div class="compact-section-head">Active sites</div>
+      <div class="site-pills">${siteSlice.map(site => {
+        const name = assets.buildings.find(b => b.type === site.type)?.name || site.type;
+        const pct = site.progress * 25;
+        return `<div class="site-pill ${pct === 100 ? 'is-done' : ''}"><span>${escape(name)}</span><b>${pct}%</b></div>`;
+      }).join('')}</div>${renderPager(buildingSitePage, totalSitePages, 'bld-site-page')}` : ''}`;
   }
 
   function renderResearch() {
-    return `<p>Knowledge: <strong>${state.resources.knowledge}</strong>. Assign a villager to the lit campfire or a completed Research Hut.</p>
-      <div class="gu-col">${abilities.filter(ability => ability.startsUnlocked || researchProjects[ability.id]).map(ability => {
+    const projects = abilities.filter(ability => Boolean(researchProjects[ability.id]));
+    const unlockedCount = projects.filter(a => state.abilities[a.id]).length;
+    const baseNames = abilities.filter(a => a.startsUnlocked).map(a => a.name).join(' · ');
+
+    return `<div class="compact-toolbar">
+      <span class="compact-meta-badge">${ic('knowledge', 14)} Knowledge: <b>${state.resources.knowledge}</b></span>
+      <span class="compact-chip">${unlockedCount} / ${projects.length} Learned</span>
+    </div>
+    <div class="compact-card research-grid-card">
+      <div class="research-grid">${projects.map(ability => {
         const project = researchProjects[ability.id];
         const unlocked = state.abilities[ability.id];
-        const available = !project?.flag || state.worldFlags[project.flag];
-        return `<div class="gu-card ${unlocked ? 'done' : ''}"><div class="gu-grow"><b>${escape(ability.name)}</b>
-          <p>${unlocked ? 'Available' : escape(project.hint)}</p></div>
-          ${unlocked ? ic('check', 24) : btn(`Learn · ${project.cost} Knowledge`, {
-            act: 'research', arg: ability.id, dis: !available || state.resources.knowledge < project.cost,
-          })}</div>`;
-      }).join('')}</div>`;
-  }
-
-  function renderJournal() {
-    return `<p>Drop villagers on berries, trees and stone deposits to stock the camp. They’ll keep working while supplies are available.</p>
-      <p>Drop an adult onto another to start a family once you have a Family House. Drop a villager onto an unwell person to offer care after learning Healing.</p>
-      <h3 class="gu-h">Island landmarks</h3>
-      <div class="gu-col">${Object.entries(landmarks).map(([id, puzzle]) =>
-        `<div class="gu-card ${state.worldFlags[id] ? 'done' : ''}"><div><b>${escape(puzzle.label)}</b>
-        <p>${state.worldFlags[id] ? 'Completed' : escape(puzzle.hint)}</p></div></div>`).join('')}</div>`;
+        const flagReady = !project.flag || state.worldFlags[project.flag];
+        const canLearn = !unlocked && flagReady && state.resources.knowledge >= project.cost;
+        const iconName = researchIcons[ability.id] || 'research';
+        return `<div class="research-tile ${unlocked ? 'is-done' : !flagReady ? 'is-locked' : ''}">
+          <div class="research-tile-head">
+            <span class="research-tile-icon">${ic(iconName, 16)}</span>
+            <b>${escape(ability.name)}</b>
+          </div>
+          <p class="compact-desc">${unlocked ? 'Unlocked for village' : escape(project.hint)}</p>
+          <div class="research-tile-foot">
+            ${unlocked
+              ? `<span class="status-pill is-done">${ic('check', 12)} Learned</span>`
+              : `<button type="button" class="gu-btn ${canLearn ? 'p' : 's'} compact-cta" data-act="research" data-arg="${ability.id}" ${!canLearn ? 'disabled' : ''}>Learn · ${project.cost}</button>`}
+          </div>
+        </div>`;
+      }).join('')}</div>
+    </div>
+    <p class="compact-footnote"><b>Starting skills:</b> ${escape(baseNames)}. Assign a villager to a lit campfire or Research Hut for Knowledge.</p>`;
   }
 
   function renderBook() {
-    return GameUI.renderCollectionBook({
-      disc: Object.fromEntries(Object.entries(state.collectionProgress).map(([id, value]) => [id, value.discovered])),
-      ui: { col: { sel: collectionDetail, tab: collectionTab } },
-    }, { col: assets.collectibles });
+    const totalDiscovered = assets.collectibles.filter(c => state.collectionProgress[c.id]?.discovered).length;
+    const totalCount = assets.collectibles.length;
+    const items = assets.collectibles.filter(c => c.category === collectionTab);
+    if (!collectionDetail || !items.some(c => c.id === collectionDetail)) {
+      collectionDetail = items[0]?.id || null;
+    }
+    const selected = items.find(c => c.id === collectionDetail) || items[0];
+    const progressEntry = selected ? state.collectionProgress[selected.id] : null;
+    const isFound = Boolean(progressEntry?.discovered);
+    const pct = Math.round((totalDiscovered / Math.max(1, totalCount)) * 100);
+
+    return `<div class="compact-toolbar">
+      <div class="col-tabs" role="tablist">${collectionTabs.map(([id, label]) => {
+        const catItems = assets.collectibles.filter(c => c.category === id);
+        const catFound = catItems.filter(c => state.collectionProgress[c.id]?.discovered).length;
+        return `<button type="button" class="gu-btn ${collectionTab === id ? 'g' : 's'} compact-tab col-tab-btn" data-act="coltab" data-arg="${id}">${label} <small>${catFound}/${catItems.length}</small></button>`;
+      }).join('')}</div>
+    </div>
+    <div class="compact-meter-row">
+      <span class="compact-chip">${ic('discovery', 13)} ${totalDiscovered} / ${totalCount}</span>
+      <div class="need-bar-track compact-meter"><div class="need-bar-fill" data-tone="${pct >= 80 ? 'good' : pct >= 40 ? 'warn' : 'low'}" style="width:${pct}%"></div></div>
+      <span class="compact-chip">${pct}%</span>
+    </div>
+    <div class="compact-card col-grid-card">
+      <div class="col-slot-grid">${items.map(item => {
+        const found = Boolean(state.collectionProgress[item.id]?.discovered);
+        const active = item.id === selected?.id;
+        return `<button type="button" class="col-slot rarity-${item.rarity} ${found ? 'is-found' : 'is-hidden'} ${active ? 'is-selected' : ''}" data-act="colsel" data-arg="${item.id}" data-tip="${found ? escape(item.name) : 'Undiscovered'}">
+          ${img(item.svg({ state: found ? 'normal' : 'undiscovered' }), 'col-sprite')}
+        </button>`;
+      }).join('')}</div>
+    </div>
+    ${selected ? `<div class="compact-card col-detail-card">
+      <div class="col-detail-icon rarity-${selected.rarity}">${img(selected.svg({ state: isFound ? 'normal' : 'undiscovered' }), 'col-detail-sprite')}</div>
+      <div class="col-detail-meta">
+        <div class="bld-card-head">
+          <h3>${isFound ? escape(selected.name) : 'Undiscovered Find'}</h3>
+          <span class="compact-chip rarity-chip-${selected.rarity}">${escape(selected.rarity)}</span>
+        </div>
+        <p class="compact-desc">${isFound ? escape(selected.description) : 'Drop a villager onto a live sparkle on the island to discover this item.'}</p>
+        <p class="compact-footnote">${isFound
+          ? `Zone: ${escape((selected.spawn.zoneTags?.[0] || 'island').replaceAll('_', ' '))} · Day ${progressEntry.firstDiscoveredAt ?? '—'} · Found ×${progressEntry.discoveryCount}`
+          : `Habitat hint: ${escape((selected.spawn.zoneTags?.[0] || 'island').replaceAll('_', ' '))}`}</p>
+      </div>
+    </div>` : ''}`;
+  }
+
+  function renderAchievements() {
+    const completedLandmarks = Object.keys(landmarks).filter(id => state.worldFlags[id]).length;
+    const totalLandmarks = Object.keys(landmarks).length;
+    const completedBuilds = state.buildings.filter(b => b.state === 'completed').length;
+    const learnedResearch = Object.keys(researchProjects).filter(id => state.abilities[id]).length;
+    const totalResearch = Object.keys(researchProjects).length;
+    const discoveredFinds = Object.values(state.collectionProgress).filter(e => e.discovered).length;
+    const totalFinds = assets.collectibles.length;
+    const hasMaster = state.villagers.some(v => Object.keys(villagerSkills).some(s => skillProgress(v, s).tier >= 2));
+
+    const cards = [
+      {
+        title: 'Island Restoration',
+        desc: 'Restore the ancient monument',
+        icon: 'trophy',
+        done: Boolean(state.achievements.island_restored),
+        current: completedLandmarks,
+        goal: totalLandmarks,
+      },
+      {
+        title: 'Village Builder',
+        desc: 'Complete 3 village buildings',
+        icon: 'build',
+        done: completedBuilds >= 3,
+        current: Math.min(3, completedBuilds),
+        goal: 3,
+      },
+      {
+        title: 'Island Scholar',
+        desc: 'Learn all 5 research skills',
+        icon: 'knowledge',
+        done: learnedResearch >= totalResearch,
+        current: learnedResearch,
+        goal: totalResearch,
+      },
+      {
+        title: 'Island Collector',
+        desc: 'Discover all 25 finds',
+        icon: 'discovery',
+        done: discoveredFinds >= totalFinds,
+        current: discoveredFinds,
+        goal: totalFinds,
+      },
+      {
+        title: 'Growing Village',
+        desc: 'Reach 8 living villagers',
+        icon: 'villagers',
+        done: state.villagers.length >= 8,
+        current: Math.min(8, state.villagers.length),
+        goal: 8,
+      },
+      {
+        title: 'Master Craft',
+        desc: 'Train any villager to Master',
+        icon: 'skillup',
+        done: hasMaster,
+        current: hasMaster ? 1 : 0,
+        goal: 1,
+      },
+    ];
+    const doneTotal = cards.filter(c => c.done).length;
+
+    return `<div class="compact-toolbar">
+      <span class="compact-meta-badge">${ic('trophy', 14)} Unlocked: <b>${doneTotal} / ${cards.length}</b></span>
+      <span class="compact-chip">${state.achievements.island_restored ? 'Island Restored' : 'In Progress'}</span>
+    </div>
+    <div class="compact-card ach-grid-card">
+      <div class="ach-grid">${cards.map(card => {
+        const pct = Math.round((card.current / Math.max(1, card.goal)) * 100);
+        return `<div class="ach-tile ${card.done ? 'is-done' : ''}">
+          <div class="ach-tile-head">
+            <span class="ach-tile-icon">${ic(card.icon, 16)}</span>
+            <b>${escape(card.title)}</b>
+            <span class="compact-chip ${card.done ? 'is-done' : ''}">${card.done ? 'Done' : `${card.current}/${card.goal}`}</span>
+          </div>
+          <p class="compact-desc">${escape(card.desc)}</p>
+          <div class="need-bar-track ach-bar"><div class="need-bar-fill" data-tone="${card.done ? 'good' : pct >= 40 ? 'warn' : 'low'}" style="width:${pct}%"></div></div>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+  }
+
+  function renderJournal() {
+    const entries = Object.entries(landmarks);
+    const perPage = 4;
+    const totalPages = Math.max(1, Math.ceil(entries.length / perPage));
+    journalPage = Math.max(0, Math.min(totalPages - 1, journalPage));
+    const slice = entries.slice(journalPage * perPage, journalPage * perPage + perPage);
+    const doneCount = entries.filter(([id]) => state.worldFlags[id]).length;
+
+    return `<div class="compact-toolbar">
+      <span class="compact-meta-badge">${ic('book', 14)} Landmarks: <b>${doneCount} / ${entries.length}</b></span>
+      <span class="compact-chip">Drop villagers to work</span>
+    </div>
+    <div class="compact-card journal-list">${slice.map(([id, puzzle]) => `
+      <div class="journal-row ${state.worldFlags[id] ? 'is-done' : ''}">
+        <div class="bld-card-head">
+          <b>${escape(puzzle.label)}</b>
+          <span class="compact-chip ${state.worldFlags[id] ? 'is-done' : ''}">${state.worldFlags[id] ? 'Done' : 'Open'}</span>
+        </div>
+        <p class="compact-desc">${state.worldFlags[id] ? 'Completed' : escape(puzzle.hint)}</p>
+      </div>`).join('')}</div>${renderPager(journalPage, totalPages, 'jrn-page')}`;
   }
 
   function renderSettings() {
@@ -298,28 +695,45 @@ export function createUI(world, view, actions) {
       </div>
     </section>
     <div class="gu-div"></div>
+    <section class="gu-col" aria-labelledby="hud-settings-title">
+      <h3 id="hud-settings-title" class="gu-h">HUD Layout</h3>
+      <p class="compact-desc">Drag any HUD bar to move, drag a corner to scale, or drop one onto another to merge tabs.</p>
+      <div class="gu-row">
+        ${btn('Reset HUD layout', { v: 's', act: 'reset-hud' })}
+        ${btn('Island journal', { icon: 'book', v: 's', act: 'open', arg: 'journal' })}
+      </div>
+    </section>
+    <div class="gu-div"></div>
     ${btn('Notifications & Events', { icon: 'info', v: 's', act: 'open', arg: 'notifications' })}`;
+  }
+
+  function renderNotifications() {
+    if (!notes.length) return '<div class="gu-empty">No notifications yet.</div>';
+    const ordered = [...notes].reverse();
+    const perPage = 5;
+    const totalPages = Math.max(1, Math.ceil(ordered.length / perPage));
+    notesPage = Math.max(0, Math.min(totalPages - 1, notesPage));
+    const slice = ordered.slice(notesPage * perPage, notesPage * perPage + perPage);
+    return `<div class="compact-card journal-list">${slice.map(note =>
+      `<div class="journal-row"><b>${escape(note.title)}</b></div>`).join('')}</div>${renderPager(notesPage, totalPages, 'note-page')}`;
   }
 
   const views = {
     villagers: renderVillagers, buildings: renderBuildings, research: renderResearch,
     collection: renderBook, settings: renderSettings, journal: renderJournal,
-    achievements: () => state.achievements.island_restored
-      ? '<div class="gu-card done">Island Restoration · Restore the ancient monument</div>'
-      : '<div class="gu-empty">Island Restoration · Restore the ancient monument</div>',
+    achievements: renderAchievements,
     save: () => `<p>The village saves automatically in this browser.</p>
       ${actions.lastSave?.() ? `<p>Last save: ${escape(new Date(actions.lastSave()).toLocaleString())}</p>` : ''}
       <div class="gu-row">${btn('Save now', { icon: 'save', act: 'save-now' })}
         ${btn('Reload village', { icon: 'load', v: 's', act: 'reload-save' })}
         ${btn('New village', { v: 'd', act: 'reset-village' })}</div>`,
-    notifications: () => notes.length ? [...notes].reverse().slice(0, 12).map(note =>
-      GameUI.renderNotification(note).replace(/<button.*?<\/button>/, '')).join('')
-      : '<div class="gu-empty">No notifications yet.</div>',
+    notifications: renderNotifications,
     pause: () => `<div class="entries">${btn('Resume', { icon: 'play', act: 'resume' })}
       ${btn('Save & Load', { icon: 'save', v: 's', act: 'open', arg: 'save' })}
       ${btn('Settings', { icon: 'gear', v: 's', act: 'open', arg: 'settings' })}
       ${btn('Main Menu', { icon: 'arrowL', v: 's', act: 'title' })}</div>`,
   };
+
   function renderMenu() {
     if (!menu) return;
     const active = document.activeElement;
@@ -328,6 +742,7 @@ export function createUI(world, view, actions) {
     if (key) [...content.querySelectorAll('[data-act]')].find(button =>
       button.dataset.act === key && button.dataset.arg === active.dataset.arg)?.focus({ preventScroll: true });
     refreshProfile();
+    hudWindows.syncWidget('menu');
   }
 
   function setMenu(next, focus = true) {
@@ -343,10 +758,13 @@ export function createUI(world, view, actions) {
       button.classList.toggle('g', active);
       button.classList.toggle('s', !active);
     });
-    if (!menu) return;
-    element('panel-title').innerHTML = ic(panelIcons[menu], 24) + escape(names[menu]);
+    if (!menu) {
+      hudWindows.refresh();
+      return;
+    }
+    element('panel-title').innerHTML = ic(panelIcons[menu], 22) + escape(names[menu]);
     renderMenu();
-    panel.scrollTop = 0;
+    hudWindows.reveal('menu');
     if (focus) element('panel-title').focus();
   }
 
@@ -357,22 +775,33 @@ export function createUI(world, view, actions) {
     for (const task of tasks) if (task.textContent !== text) task.textContent = text;
     if (!villager || !element('villager-needs')) return;
     element('villager-age').textContent = villager.age;
-    element('villager-needs').textContent = `Health ${Math.round(villager.needs.health)}% · Fed ${villager.needs.hunger}% · Energy ${Math.round(villager.needs.energy)}%`;
+
+    const needLabels = { health: 'Health', hunger: 'Fed', energy: 'Energy' };
+    for (const key of ['health', 'hunger', 'energy']) {
+      const item = content.querySelector(`[data-need="${key}"]`);
+      if (!item) continue;
+      const { value, tone } = needStatus(villager.needs[key]);
+      const tip = `${needLabels[key]}: ${value}%`;
+      if (item.dataset.tip !== tip) {
+        item.dataset.tip = tip;
+        item.setAttribute('aria-label', tip);
+      }
+      const track = item.querySelector('.need-bar-track');
+      if (track) track.setAttribute('aria-valuenow', String(value));
+      const fill = item.querySelector('.need-bar-fill');
+      if (fill) {
+        const w = `${value}%`;
+        if (fill.style.width !== w) fill.style.width = w;
+        if (fill.dataset.tone !== tone) fill.dataset.tone = tone;
+      }
+    }
+
     for (const row of content.querySelectorAll('[data-skill]')) {
-      const { xp, progress, rank, next, tier } = skillProgress(villager, row.dataset.skill);
-      const current = row.querySelector('.skill-rank');
-      if (current.textContent !== rank.name) {
-        current.textContent = rank.name;
-        current.dataset.tier = tier;
-      }
-      const bar = row.querySelector('progress');
-      const label = next ? `${xp} / ${next.threshold} XP` : `${xp} XP`;
-      if (bar.value !== progress) bar.value = progress;
-      const detail = row.querySelector('small');
-      if (detail.textContent !== label) {
-        detail.textContent = label;
-        bar.setAttribute('aria-valuetext', label);
-      }
+      const { rank, tier, level } = skillProgress(villager, row.dataset.skill);
+      const badge = row.querySelector('.skill-rank');
+      const label = `${rank.name} Lv. ${level}`;
+      if (badge.textContent !== label) badge.textContent = label;
+      if (badge.dataset.tier !== String(tier)) badge.dataset.tier = String(tier);
     }
   }
 
@@ -396,18 +825,42 @@ export function createUI(world, view, actions) {
     element('inspector').textContent = JSON.stringify(record, null, 2);
   }
 
+  function renderDevActions() {
+    element('dev-actions').innerHTML = renderDevActionsHtml(devActionPage);
+    hudWindows.syncWidget('dev');
+  }
+
+  function setDevTab(next) {
+    devTab = next;
+    for (const name of ['actions', 'overlays', 'inspector']) {
+      element(`dev-tab-${name}`).hidden = name !== devTab;
+    }
+    debugPanel.querySelectorAll('[data-dev-tab]').forEach(button => {
+      const active = button.dataset.devTab === devTab;
+      button.setAttribute('aria-selected', String(active));
+      button.classList.toggle('g', active);
+      button.classList.toggle('s', !active);
+    });
+    hudWindows.syncWidget('dev');
+  }
+
   function setDebug(enabled) {
     view.debug = enabled;
     element('debug').setAttribute('aria-pressed', enabled);
-    element('debug-panel').hidden = !enabled;
+    debugPanel.hidden = !enabled;
     if (!enabled) {
       view.placementType = null;
       view.placement = null;
       element('inspector').textContent = '';
+      hudWindows.refresh();
+    } else {
+      setDevTab(devTab);
+      hudWindows.reveal('dev');
     }
     if (menu === 'collection') renderMenu();
   }
 
+  element('dev-actions').innerHTML = renderDevActionsHtml(devActionPage);
   element('overlays').innerHTML = Object.entries(debugOptions).map(([key, label]) =>
     `<label><input type="checkbox" value="${key}"> ${label}</label>`).join('');
   element('overlays').addEventListener('change', event => {
@@ -415,6 +868,32 @@ export function createUI(world, view, actions) {
     if (checked) view.overlays.add(value);
     else view.overlays.delete(value);
   });
+
+  debugPanel.addEventListener('click', event => {
+    const tabBtn = event.target.closest('button[data-dev-tab]');
+    if (tabBtn) {
+      setDevTab(tabBtn.dataset.devTab);
+      return;
+    }
+    const pageBtn = event.target.closest('button[data-dev-page]');
+    if (pageBtn) {
+      devActionPage = Number(pageBtn.dataset.devPage) || 0;
+      renderDevActions();
+      return;
+    }
+    const devBtn = event.target.closest('button[data-dev]');
+    if (!devBtn) return;
+    const result = runDevAction(devBtn.dataset.dev, world, view, {
+      resetHud: () => hudWindows.resetLayout(),
+      openMenu: targetMenu => setMenu(targetMenu),
+    });
+    if (result?.message) notify(result.message);
+    refreshStatus();
+    refreshProfile();
+    if (menu) renderMenu();
+    hudWindows.refresh();
+  });
+
   element('debug').onclick = () => setDebug(!view.debug);
   element('close-panel').onclick = closeMenu;
   element('back-panel').onclick = () => {
@@ -497,6 +976,9 @@ export function createUI(world, view, actions) {
       else notify('This browser could not save the village.');
     } else if (act === 'reset-village') {
       actions.resetVillage();
+    } else if (act === 'reset-hud') {
+      hudWindows.resetLayout();
+      notify('HUD layout reset to default.');
     } else if (act === 'volume') {
       setVolume(Number(arg));
       saveAudioSettings();
@@ -506,7 +988,29 @@ export function createUI(world, view, actions) {
         collectionDetail = null;
       } else collectionDetail = arg;
       renderMenu();
-      content.querySelector(`[data-act="${act}"][data-arg="${arg}"]`)?.focus();
+    } else if (act === 'bld-filter') {
+      buildingFilter = arg;
+      renderMenu();
+    } else if (act === 'bld-select') {
+      buildingType = arg;
+      const states = assets.buildings.find(d => d.type === buildingType)?.states || {};
+      buildingState = states.completed ? 'completed' : Object.keys(states)[0];
+      renderMenu();
+    } else if (act === 'bld-state') {
+      buildingState = arg;
+      renderMenu();
+    } else if (act === 'bld-site-page') {
+      buildingSitePage = Number(arg) || 0;
+      renderMenu();
+    } else if (act === 'vil-page') {
+      villagerPage = Number(arg) || 0;
+      renderMenu();
+    } else if (act === 'jrn-page') {
+      journalPage = Number(arg) || 0;
+      renderMenu();
+    } else if (act === 'note-page') {
+      notesPage = Number(arg) || 0;
+      renderMenu();
     }
   });
   content.addEventListener('input', event => {
@@ -523,31 +1027,20 @@ export function createUI(world, view, actions) {
     }
   });
   content.addEventListener('change', event => {
-    const field = event.target;
-    if (field.id === 'building-type') {
-      buildingType = field.value;
-      const states = assets.buildings.find(definition => definition.type === buildingType).states;
-      buildingState = states.completed ? 'completed' : Object.keys(states)[0];
-      renderMenu();
-      element(field.id).focus();
-    }
-    if (field.id === 'building-state') {
-      buildingState = field.value;
-      renderMenu();
-      element(field.id).focus();
-    }
-    if (field.id === 'music-volume') saveAudioSettings();
+    if (event.target.id === 'music-volume') saveAudioSettings();
   });
 
   function selectVillager(villager) {
+    if (!villager) return;
     if (menu !== 'villagers') {
       menuHistory.length = 0;
       menuTrigger = nav.querySelector('[data-arg="villagers"]');
     }
-    setMenu('villagers', false);
     selection.innerHTML = GameUI.panel({ cls: 'sm', body: `<div class="gu-row">
       ${portrait(villager, 'thumb')}<div class="gu-grow"><b>${escape(villager.name)}</b><div class="gu-mut" id="selected-task"></div></div>
       ${btn('Profile', { v: 's', icon: 'villagers', act: 'open', arg: 'villagers' })}</div>` });
+    setMenu('villagers', false);
+    hudWindows.refresh();
     inspect(tileToWorld(villager.tile, map.meta.tileSize), { entity: villager, hit: 'villager' });
     refreshStatus();
     refreshProfile();
@@ -571,6 +1064,9 @@ export function createUI(world, view, actions) {
     } else closeMenu();
   }
 
-  GameUI.bindTooltips(document.querySelector('main'));
-  return { inspect, notify, selectVillager, refreshStatus, refreshProfile, closeMenu, togglePause };
+  const tooltips = bindSmartTooltips(document.querySelector('main'));
+  return {
+    inspect, notify, selectVillager, refreshStatus, refreshProfile, closeMenu, togglePause,
+    hudWindows, tooltips, setMenu, setDebug,
+  };
 }

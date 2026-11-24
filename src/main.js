@@ -6,7 +6,8 @@ import * as resource from '/studio/resource.js';
 import * as wildlife from '/studio/wildlife.js';
 import * as studioUI from '/studio/ui.js';
 import { createAssets } from './assets.js';
-import { screenToWorld, tileToWorld, worldToScreen, worldToTile, zoomAt } from './geometry.js';
+import { screenToWorld, tileToWorld, worldToScreen, worldToTile } from './geometry.js';
+import { clampZoom, createCameraController } from './camera-controls.js';
 import { createRenderer, svgUrl } from './render.js';
 import { createUI } from './ui.js';
 import { createWorld, enableWildlifeDirector, previewPlacement, updateWorld } from './world.js';
@@ -14,6 +15,7 @@ import { cameraWorldRect } from './wildlife-director.js';
 import { startGameplay } from './gameplay.js';
 import { landmarks } from './progression.js';
 import { advanceOffline, readVillage, restoreVillage, saveVillage } from './save.js';
+import { runDevAction } from './dev-tools.js';
 
 const assets = createAssets({ island, character, building, collectible, resource, wildlife, ui: studioUI });
 const world = createWorld(assets);
@@ -31,18 +33,19 @@ const dropHint = document.getElementById('drop-action');
 const dropIcon = dropHint.querySelector('img');
 const dropLabel = dropHint.querySelector('span');
 const camera = { x: 0, y: 0, zoom: 2 };
+const cameraController = createCameraController(camera);
 const view = {
   selectedVillager: null, selectedObject: null, debug: new URLSearchParams(location.search).get('debug') === '1',
   overlays: new Set(), placementType: null, placement: null, drag: null,
 };
 const renderer = createRenderer(canvas, world, camera, view);
-const zoomLevels = [0.25, 0.5, 1, 2, 3, 4];
 const center = () => ({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 });
 
 function centerOn(position) {
   const screen = center();
   camera.x = Math.round(screen.x - position.x * camera.zoom);
   camera.y = Math.round(screen.y - position.y * camera.zoom);
+  cameraController.syncFromCamera();
 }
 
 function selectedVillager() {
@@ -55,15 +58,13 @@ function resetCamera() {
 }
 
 function adjustZoom(direction, point = center()) {
-  const current = zoomLevels.indexOf(camera.zoom);
-  const next = Math.min(zoomLevels.length - 1, Math.max(0, current + direction));
-  if (current !== next) zoomAt(camera, point, zoomLevels[next]);
+  cameraController.stepButtonZoom(direction, point);
 }
 
 function fitCamera() {
   const { pixelWidth, pixelHeight } = world.map.meta;
   const fit = Math.min(canvas.clientWidth / pixelWidth, canvas.clientHeight / pixelHeight);
-  camera.zoom = zoomLevels.findLast(zoom => zoom <= fit) || zoomLevels[0];
+  camera.zoom = clampZoom(fit);
   centerOn({ x: pixelWidth / 2, y: pixelHeight / 2 });
 }
 
@@ -139,6 +140,8 @@ function command(position) {
 }
 
 let pointer = null;
+const touchPointers = new Map();
+let pinchState = null;
 const dropRef = hit => hit && { kind: hit.hit, id: hit.entity.id };
 
 function refreshDropPreview() {
@@ -187,15 +190,34 @@ function clearPointer() {
   canvas.classList.remove('dragging');
 }
 
+function touchGestureSnapshot() {
+  const pts = [...touchPointers.values()];
+  if (pts.length < 2) return null;
+  const [a, b] = pts;
+  return {
+    midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    distance: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)),
+  };
+}
+
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
   event.preventDefault();
-  adjustZoom(event.deltaY < 0 ? 1 : -1, canvasPosition(event));
+  cameraController.handleWheel(event, canvasPosition(event));
 }, { passive: false });
 
 canvas.addEventListener('pointerdown', event => {
-  if (pointer || (event.button !== 0 && event.button !== 2 && event.button !== 1)) return;
   const start = canvasPosition(event);
+  if (event.pointerType === 'touch') {
+    touchPointers.set(event.pointerId, start);
+    if (touchPointers.size === 2) {
+      clearPointer();
+      pinchState = touchGestureSnapshot();
+      canvas.setPointerCapture(event.pointerId);
+      return;
+    }
+  }
+  if (pointer || pinchState || (event.button !== 0 && event.button !== 2 && event.button !== 1)) return;
   const villager = !view.placementType && event.button === 0
     ? renderer.pick(screenToWorld(start, camera), 'villager')?.entity : null;
   pointer = { id: event.pointerId, start, screen: start, x: camera.x, y: camera.y, villager, moved: false, button: event.button };
@@ -205,6 +227,15 @@ canvas.addEventListener('pointerdown', event => {
 
 canvas.addEventListener('pointermove', event => {
   const screen = canvasPosition(event);
+  if (event.pointerType === 'touch' && touchPointers.has(event.pointerId)) {
+    touchPointers.set(event.pointerId, screen);
+    if (pinchState && touchPointers.size >= 2) {
+      const next = touchGestureSnapshot();
+      cameraController.handleTouchPinch(pinchState.midpoint, next.midpoint, next.distance / pinchState.distance);
+      pinchState = next;
+      return;
+    }
+  }
   if (pointer?.id === event.pointerId) {
     pointer.screen = screen;
     const dx = screen.x - pointer.start.x;
@@ -213,6 +244,7 @@ canvas.addEventListener('pointermove', event => {
     if (pointer.moved && !pointer.villager) {
       camera.x = Math.round(pointer.x + dx);
       camera.y = Math.round(pointer.y + dy);
+      cameraController.syncFromCamera();
       canvas.classList.add('dragging');
     }
     if (pointer.moved && pointer.villager) liftVillager();
@@ -225,6 +257,10 @@ canvas.addEventListener('pointermove', event => {
 });
 
 canvas.addEventListener('pointerup', event => {
+  if (event.pointerType === 'touch') {
+    touchPointers.delete(event.pointerId);
+    if (touchPointers.size < 2) pinchState = null;
+  }
   if (pointer?.id !== event.pointerId) return;
   const { villager, moved, button } = pointer;
   const held = Boolean(view.drag);
@@ -251,7 +287,9 @@ canvas.addEventListener('pointerup', event => {
   command(position);
 });
 
-for (const event of ['pointercancel', 'lostpointercapture']) canvas.addEventListener(event, input => {
+for (const eventName of ['pointercancel', 'lostpointercapture']) canvas.addEventListener(eventName, input => {
+  touchPointers.delete(input.pointerId);
+  if (touchPointers.size < 2) pinchState = null;
   if (pointer?.id === input.pointerId) clearPointer();
 });
 
@@ -279,6 +317,16 @@ if (view.debug) {
 resetCamera();
 const wildlifeDirector = enableWildlifeDirector(world);
 ui.refreshStatus();
+
+window.__ISLAND_DEV__ = {
+  world, view, camera, cameraController, renderer, ui,
+  selectVillager,
+  runDevAction: id => runDevAction(id, world, view, {
+    resetHud: () => ui.hudWindows.resetLayout(),
+    openMenu: next => ui.setMenu(next),
+  }),
+};
+
 let last = performance.now();
 let lastStatus = 0;
 let lastPreview = 0;
@@ -288,8 +336,10 @@ function frame(now) {
     requestAnimationFrame(frame);
     return;
   }
+  const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
+  cameraController.update(dt);
   wildlifeDirector.setView(cameraWorldRect(camera, canvas.clientWidth, canvas.clientHeight));
-  updateWorld(world, Math.max(0, Math.min(0.1, (now - last) / 1000)));
+  updateWorld(world, dt);
   if (view.drag) {
     updateDragPosition();
     if (now - lastPreview >= 55) {

@@ -904,7 +904,7 @@ export function startGameplay(world) {
       if (villager.route.length) moveVillager(world, villager, [villager.tile]);
       stop(villager);
       villager.retryAt = state.time.seconds + 12;
-    }, refreshCollision,
+    }, refreshCollision, spawnCollectible,
     get revision() { return revision; },
     subscribe(listener) { listeners.add(listener); },
   };

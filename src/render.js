@@ -1,3 +1,4 @@
+import { computeAtmosphere, drawAtmosphereOverlay, drawNightLights, drawRain } from './atmosphere.js';
 import { tileToWorld, worldToTile } from './geometry.js';
 import { birdVisuals } from './birds.js';
 import { dolphinVisuals } from './dolphin.js';
@@ -6,6 +7,11 @@ import { contactVisual, groundPosition, villagerFrame } from './ground.js';
 import { turtleVisuals } from './turtle.js';
 import { jobVisual } from './villagers.js';
 import { wildlifeOpacity } from './wildlife-director.js';
+
+export const RENDER_CONFIG = {
+  maxDpr: 1.5,
+  cullMarginPx: 64,
+};
 
 export const svgUrl = svg => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 export const debugOptions = {
@@ -25,6 +31,7 @@ export function createRenderer(canvas, world, camera, view) {
   const { map, assets, state } = world;
   const { tileSize, pixelWidth, pixelHeight } = map.meta;
   const images = new Map();
+  const bitmaps = new Map();
   const spriteVariants = new WeakMap();
   const hitMasks = new WeakMap();
   const maskCanvas = document.createElement('canvas');
@@ -32,25 +39,57 @@ export function createRenderer(canvas, world, camera, view) {
   const overlay = document.createElement('canvas');
   overlay.width = pixelWidth;
   overlay.height = pixelHeight;
+  const atmosphereVeil = typeof document !== 'undefined' ? document.getElementById('atmosphere-veil') : null;
+  let lastVeilStyle = '';
   let overlayKey = null;
   let hits = [];
 
-  function image(key, makeSvg) {
-    if (!images.has(key)) {
-      const image = new Image();
-      const svg = makeSvg();
-      image.src = svg.length > 40000 ? URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })) : svgUrl(svg);
-      if (image.src.startsWith('blob:')) {
-        const url = image.src;
-        image.onload = image.onerror = () => URL.revokeObjectURL(url);
-      }
-      images.set(key, image);
+  function bakeBitmap(key, img) {
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    try {
+      const offscreen = document.createElement('canvas');
+      offscreen.width = img.naturalWidth;
+      offscreen.height = img.naturalHeight;
+      const offCtx = offscreen.getContext('2d');
+      offCtx.imageSmoothingEnabled = false;
+      offCtx.drawImage(img, 0, 0);
+      bitmaps.set(key, offscreen);
+    } catch {
+      // Fall back to direct image draw if rasterization fails.
     }
-    return images.get(key);
   }
 
-  function drawImage(image, x, y) {
-    if (image.complete && image.naturalWidth) context.drawImage(image, Math.round(x), Math.round(y));
+  function image(key, makeSvg) {
+    const baked = bitmaps.get(key);
+    if (baked) return baked;
+    let img = images.get(key);
+    if (!img) {
+      img = new Image();
+      const svg = makeSvg();
+      const isBlob = svg.length > 40000;
+      const src = isBlob ? URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })) : svgUrl(svg);
+      img.onload = () => {
+        bakeBitmap(key, img);
+        if (isBlob) URL.revokeObjectURL(src);
+      };
+      img.onerror = () => {
+        if (isBlob) URL.revokeObjectURL(src);
+      };
+      img.src = src;
+      images.set(key, img);
+    } else if (img.complete && img.naturalWidth) {
+      bakeBitmap(key, img);
+      return bitmaps.get(key) || img;
+    }
+    return img;
+  }
+
+  function isReady(source) {
+    return source instanceof HTMLCanvasElement ? source.width > 0 : Boolean(source.complete && source.naturalWidth);
+  }
+
+  function drawImage(source, x, y) {
+    if (isReady(source)) context.drawImage(source, Math.round(x), Math.round(y));
   }
 
   function describeSprite(entity, asset, options, position, hit) {
@@ -59,37 +98,44 @@ export function createRenderer(canvas, world, camera, view) {
     return { entity, asset, options, x, y, depth: position.y, position, hit };
   }
 
-  function paintSprite(sprite) {
+  function spriteCacheKey(asset, options) {
+    if (!options) return asset.id;
+    const cfg = options.config;
+    const cfgKey = cfg
+      ? `${cfg.seed ?? ''}_${cfg.lifeStage ?? ''}_${cfg.heldObject ?? ''}_${cfg.accessories ? cfg.accessories.join(',') : ''}`
+      : '';
+    return `${asset.id}|${cfgKey}|${options.direction ?? ''}|${options.animation ?? ''}|${options.frame ?? ''}|${options.shadow ?? ''}|${options.rank ?? ''}`;
+  }
+
+  function paintSprite(sprite, bounds) {
     const { entity, asset, options, x, y, hit } = sprite;
-    if (x + asset.width < -camera.x / camera.zoom || y + asset.height < -camera.y / camera.zoom
-      || x > (canvas.clientWidth - camera.x) / camera.zoom || y > (canvas.clientHeight - camera.y) / camera.zoom) return;
-    const key = [asset.id, options?.config && JSON.stringify(options.config),
-      options?.direction, options?.animation, options?.frame, options?.shadow, options?.rank].join('|');
-    const spriteImage = image(key, () => asset.svg(options));
+    if (bounds && (x + asset.width < bounds.left || y + asset.height < bounds.top
+      || x > bounds.right || y > bounds.bottom)) return;
     if (sprite.opacity === 0) return;
-    if (sprite.opacity < 1) {
-      context.save();
-      context.globalAlpha = sprite.opacity;
-    }
-    if (sprite.impact && spriteImage.complete && spriteImage.naturalWidth) {
+    const key = spriteCacheKey(asset, options);
+    const spriteImage = image(key, () => asset.svg(options));
+    const ready = isReady(spriteImage);
+    const faded = sprite.opacity < 1;
+    if (faded) context.globalAlpha = sprite.opacity;
+    if (sprite.impact && ready) {
       const { wide, tall } = sprite.impact;
       context.drawImage(spriteImage, x - wide / 2, y - tall, asset.width + wide, asset.height + tall);
     } else if (sprite.angle || sprite.aquatic?.tint) drawSpriteVariant(spriteImage, sprite);
-    else drawImage(spriteImage, x, y);
-    if (sprite.opacity < 1) context.restore();
-    if (hit && spriteImage.complete && spriteImage.naturalWidth) {
+    else if (ready) context.drawImage(spriteImage, x, y);
+    if (faded) context.globalAlpha = 1;
+    if (hit && ready) {
       hits.push({ entity, x, y, width: asset.width, height: asset.height, hit, image: spriteImage });
     }
   }
 
-  function drawSpriteVariant(image, sprite) {
-    if (!image.complete || !image.naturalWidth) return;
+  function drawSpriteVariant(source, sprite) {
+    if (!isReady(source)) return;
     const { asset, x, y, angle } = sprite;
     const { width, height, anchor: { x: center } } = asset;
     const tint = sprite.aquatic?.tint;
     const key = `${angle || 0}|${tint?.color || ''}|${tint?.alpha || 0}`;
-    if (!spriteVariants.has(image)) spriteVariants.set(image, new Map());
-    const variants = spriteVariants.get(image);
+    if (!spriteVariants.has(source)) spriteVariants.set(source, new Map());
+    const variants = spriteVariants.get(source);
     if (!variants.has(key)) {
       const pitch = Math.tan(angle * Math.PI / 180);
       const margin = Math.ceil(Math.max(center, width - center) * Math.abs(pitch));
@@ -101,9 +147,9 @@ export function createRenderer(canvas, world, camera, view) {
       if (angle) {
         for (let column = 0; column < width; column++) {
           const offset = Math.round((column - center) * pitch);
-          pixels.drawImage(image, column, 0, 1, height, column, margin + offset, 1, height);
+          pixels.drawImage(source, column, 0, 1, height, column, margin + offset, 1, height);
         }
-      } else pixels.drawImage(image, 0, 0);
+      } else pixels.drawImage(source, 0, 0);
       if (tint) {
         pixels.globalCompositeOperation = 'source-atop';
         pixels.globalAlpha = tint.alpha;
@@ -120,30 +166,37 @@ export function createRenderer(canvas, world, camera, view) {
     const { shadowWidth, shadowHeight, shadowOpacity } = shadow;
     const left = Math.round(sprite.position.x - shadowWidth / 2);
     const top = Math.round(sprite.position.y - shadowHeight / 2);
-    context.save();
     context.fillStyle = color;
     context.globalAlpha = shadowOpacity * (sprite.opacity ?? 1);
     for (let row = 0; row < shadowHeight; row++) {
       const inset = row === 0 || row === shadowHeight - 1 ? Math.round(shadowWidth / 5) : 0;
       context.fillRect(left + inset, top + row, shadowWidth - inset * 2, 1);
     }
-    context.restore();
+    context.globalAlpha = 1;
   }
 
   function drawGroundParticle(particle) {
-    context.save();
     context.fillStyle = particle.color;
     context.globalAlpha = (1 - particle.age / particle.life) * 0.86;
     context.fillRect(Math.round(particle.x), Math.round(particle.y), 1, particle.age < 0.09 ? 2 : 1);
-    context.restore();
+    context.globalAlpha = 1;
   }
 
-  function objects() {
-    return map.objects.map(object => {
+  function objects(bounds) {
+    const list = [];
+    const margin = RENDER_CONFIG.cullMarginPx;
+    for (const object of map.objects) {
+      if (bounds) {
+        const ax = object.anchor.x;
+        const ay = object.anchor.y;
+        if (ax + margin < bounds.left || ax - margin > bounds.right
+          || ay + margin < bounds.top || ay - margin * 2 > bounds.bottom) continue;
+      }
       const current = state.objects[object.id];
       const asset = assets.registry.get(current.art || object.states?.[current.state] || object.assetId);
-      return describeSprite(object, asset, undefined, object.anchor, object.decorative ? null : 'object');
-    });
+      list.push(describeSprite(object, asset, undefined, object.anchor, object.decorative ? null : 'object'));
+    }
+    return list;
   }
 
   function villagers() {
@@ -290,10 +343,12 @@ export function createRenderer(canvas, world, camera, view) {
     });
   }
 
-  function drawEffects() {
+  function drawEffects(bounds) {
     for (const effect of assets.effects) {
       if (effect.id === 'waterfall_flow' && state.worldFlags.open_waterfall_passage) continue;
       const asset = assets.registry.get(effect.id);
+      if (bounds && (effect.x + asset.width < bounds.left || effect.y + asset.height < bounds.top
+        || effect.x > bounds.right || effect.y > bounds.bottom)) continue;
       const frame = frameAt(asset.animations.default, state.time.seconds);
       drawImage(image(`${effect.id}|${frame}`, () => asset.svg({ frame })), effect.x, effect.y);
     }
@@ -428,24 +483,50 @@ export function createRenderer(canvas, world, camera, view) {
   }
 
   function render() {
-    const scale = window.devicePixelRatio || 1;
+    const scale = Math.min(window.devicePixelRatio || 1, RENDER_CONFIG.maxDpr);
     const width = Math.round(canvas.clientWidth * scale);
     const height = Math.round(canvas.clientHeight * scale);
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
     }
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.fillStyle = '#3f7f9c';
-    context.fillRect(0, 0, width, height);
+    const bounds = {
+      left: -camera.x / camera.zoom,
+      top: -camera.y / camera.zoom,
+      right: (canvas.clientWidth - camera.x) / camera.zoom,
+      bottom: (canvas.clientHeight - camera.y) / camera.zoom,
+    };
+    const terrainSource = image('island', assets.terrain.svg);
+    const terrainReady = isReady(terrainSource);
+    const fullyInsideMap = terrainReady && bounds.left >= 0 && bounds.top >= 0
+      && bounds.right <= pixelWidth && bounds.bottom <= pixelHeight;
+    if (!fullyInsideMap) {
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.fillStyle = '#3f7f9c';
+      context.fillRect(0, 0, width, height);
+    }
     context.imageSmoothingEnabled = false;
     context.setTransform(camera.zoom * scale, 0, 0, camera.zoom * scale, camera.x * scale, camera.y * scale);
-    drawImage(image('island', assets.terrain.svg), 0, 0);
+    if (terrainReady) {
+      const sx = Math.max(0, Math.floor(bounds.left));
+      const sy = Math.max(0, Math.floor(bounds.top));
+      const ex = Math.min(pixelWidth, Math.ceil(bounds.right));
+      const ey = Math.min(pixelHeight, Math.ceil(bounds.bottom));
+      const sw = ex - sx;
+      const sh = ey - sy;
+      if (sw > 0 && sh > 0) context.drawImage(terrainSource, sx, sy, sw, sh, sx, sy, sw, sh);
+    }
     hits = [];
-    const scenery = objects();
+    const scenery = objects(bounds);
     const villagersOnMap = villagers();
-    const foreground = scenery.filter(sprite => sprite.entity.canopy);
-    const isFlat = sprite => sprite.entity.layer === 'ground-decoration' && sprite.entity.type !== 'tall_grass';
+    const foreground = [];
+    const flatScenery = [];
+    const tallScenery = [];
+    for (const sprite of scenery) {
+      if (sprite.entity.canopy) foreground.push(sprite);
+      if (sprite.entity.layer === 'ground-decoration' && sprite.entity.type !== 'tall_grass') flatScenery.push(sprite);
+      else tallScenery.push(sprite);
+    }
     const animals = creatures();
     const overCanopy = sprite => {
       const motion = sprite.entity.ecology?.motion;
@@ -458,36 +539,51 @@ export function createRenderer(canvas, world, camera, view) {
       paintSubmergedWildlife(sprite);
     }
     drawFishParticles(false);
-    const entities = [...scenery.filter(sprite => !isFlat(sprite)),
+    const entities = [...tallScenery,
       ...crops(), ...buildings(), ...villagersOnMap.filter(sprite => sprite.entity.id !== view.drag?.id),
       ...animals.filter(sprite => !overCanopy(sprite) && !sprite.aquatic?.submerged), ...collectibles()];
-    for (const sprite of scenery.filter(isFlat)) paintSprite(sprite);
+    for (const sprite of flatScenery) paintSprite(sprite, bounds);
     for (const sprite of animals) if (sprite.bird) drawContactShadow(sprite, sprite.bird, '#1b1926');
     const terrainEffects = world.groundParticles.map(particle => ({ particle, depth: particle.groundY, x: particle.x }));
     for (const item of [...entities, ...terrainEffects].sort((a, b) => a.depth - b.depth || a.x - b.x)) {
       if (item.particle) drawGroundParticle(item.particle);
       else {
         if (item.ground) drawContactShadow(item, item.ground, '#302a23');
-        paintSprite(item);
+        paintSprite(item, bounds);
       }
     }
     for (const sprite of foreground) drawImage(
       image(`canopy:${sprite.asset.id}`, () => assets.canopySvg(sprite.asset.id)), sprite.x, sprite.y,
     );
-    drawEffects();
+    drawEffects(bounds);
     drawShoreRipples();
     drawFishParticles(true);
-    for (const sprite of animals) if (overCanopy(sprite)) paintSprite(sprite);
+    for (const sprite of animals) if (overCanopy(sprite)) paintSprite(sprite, bounds);
+    const atmosphere = computeAtmosphere(state.time.minutes, state.weather.current);
+    if (atmosphereVeil) {
+      const nextVeil = atmosphere.overlayStyle || 'transparent';
+      if (lastVeilStyle !== nextVeil) {
+        lastVeilStyle = nextVeil;
+        atmosphereVeil.style.backgroundColor = nextVeil;
+      }
+    } else {
+      drawAtmosphereOverlay(context, width, height, atmosphere);
+      context.setTransform(camera.zoom * scale, 0, 0, camera.zoom * scale, camera.x * scale, camera.y * scale);
+    }
+    drawNightLights(context, world, atmosphere, bounds);
+    drawRain(context, width, height, state.time.seconds, scale, atmosphere);
+    context.setTransform(camera.zoom * scale, 0, 0, camera.zoom * scale, camera.x * scale, camera.y * scale);
     if (state.abilities.fish) {
       const wave = assets.registry.get('icon_arrowD');
       for (const spot of map.fishingSpots) {
         if (spot.requires.includes('bridge_repaired') && !state.worldFlags.repair_bridge) continue;
         const { x, y } = tileToWorld(spot.waterTarget, tileSize);
+        if (x + 8 < bounds.left || y + 8 < bounds.top || x - 8 > bounds.right || y - 8 > bounds.bottom) continue;
         drawImage(image(wave.id, wave.svg), x - 8, y - 8);
       }
     }
     drawPreview();
-    const sprites = [...scenery.filter(isFlat), ...entities];
+    const sprites = [...flatScenery, ...entities];
     drawDebug(sprites);
     const selected = sprites.find(sprite => sprite.entity.id === view.selectedVillager);
     if (selected) {
