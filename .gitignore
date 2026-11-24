@@ -1,0 +1,25 @@
+# Dependencies & logs
+node_modules/
+npm-debug.log*
+
+# OS & editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Environment & local overrides
+.env
+.env.*
+
+# Graphify internal caches and temporary extraction sidecars
+graphify-out/.graphify_*
+graphify-out/cache/
+graphify-out/.needs_update
+
+#SKILLS
+GEMINI.md
+graphify-out
