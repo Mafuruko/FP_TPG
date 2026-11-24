@@ -1,4 +1,4 @@
-import { updateWorld } from './world.js';
+import { initializeWorldWildlife, updateWorld } from './world.js';
 
 const key = 'island-colony.village.v1';
 export const offlineLimit = 90;
@@ -26,6 +26,10 @@ export function restoreVillage(world, save) {
   const resources = world.state.resources;
   Object.assign(resources, save.state.resources);
   Object.assign(world.state, save.state, { resources });
+  world.fishParticles = [];
+  world.groundParticles = [];
+  world.shoreRipples = [];
+  initializeWorldWildlife(world);
   return true;
 }
 

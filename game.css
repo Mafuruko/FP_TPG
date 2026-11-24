@@ -4,6 +4,26 @@ body { margin: 0; height: 100dvh; overflow: hidden; }
 main.gu { height: 100%; }
 canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; image-rendering: pixelated; }
 canvas.dragging { cursor: grabbing; }
+#drop-action {
+  position: absolute;
+  left: 50%;
+  top: 30px;
+  z-index: 12;
+  transform: translate(-50%, -100%);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px 3px 4px;
+  border: 2px solid #f2cf7d;
+  background: #3a3028;
+  box-shadow: 2px 2px #251d18;
+  color: #fff3cf;
+  font-size: 13px;
+  font-weight: bold;
+  white-space: nowrap;
+  pointer-events: none;
+}
+#drop-action img { image-rendering: pixelated; }
 button, select { font: inherit; }
 h2, h3, p { margin: 0; }
 .row, .bottom { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -27,6 +47,23 @@ h2, h3, p { margin: 0; }
 .panel img { object-fit: contain; max-width: 100%; }
 .entries { display: grid; gap: 4px; margin: 6px 0; }
 .gu-btn.entry { justify-content: flex-start; }
+.villager-quirks { color: #674d29; font-size: 12px; font-weight: bold; }
+.villager-skills { display: grid; gap: 4px; margin: 7px 0; }
+.villager-skill { display: grid; grid-template-columns: minmax(6rem, 1fr) auto; column-gap: 8px; align-items: center; }
+.villager-skill progress {
+  appearance: none;
+  width: 100%;
+  height: 8px;
+  border: 1px solid #765936;
+  background: #d2b88a;
+  color: #536b42;
+}
+.villager-skill progress::-webkit-progress-bar { background: #d2b88a; }
+.villager-skill progress::-webkit-progress-value { background: #536b42; }
+.villager-skill progress::-moz-progress-bar { background: #536b42; }
+.villager-skill small, .skill-rank { text-align: right; white-space: nowrap; font-size: 11px; }
+.skill-rank[data-tier="1"] { color: #3c5e72; }
+.skill-rank[data-tier="2"] { color: #80500f; }
 .portrait { width: 48px; height: 64px; }
 .thumb { width: 36px; height: 48px; }
 .building-preview { display: block; margin: 8px auto; max-height: 128px; }

@@ -3,23 +3,32 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { readStudioModules } from './studios.js';
 
-const modules = await readStudioModules();
 const root = new URL('../', import.meta.url);
 const types = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', mp3: 'audio/mpeg' };
 const port = Number(process.env.ISLAND_PORT || 8080);
+let studioRead;
+
+function studioModules() {
+  // Share concurrent reads for a page load, then regenerate from disk on the next request.
+  return studioRead ??= readStudioModules().finally(() => { studioRead = undefined; });
+}
 
 createServer(async (request, response) => {
   try {
     const path = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
-    if (path === '/studio/ui.css') {
-      response.writeHead(200, { 'Content-Type': types.css });
-      response.end(modules.uiCss);
-      return;
-    }
     const generated = /^\/studio\/([a-z]+)\.js$/.exec(path);
-    if (generated && Object.hasOwn(modules, generated[1])) {
-      response.writeHead(200, { 'Content-Type': types.js });
-      response.end(modules[generated[1]]);
+    const studioKey = path === '/studio/ui.css' ? 'uiCss' : generated?.[1];
+    if (studioKey) {
+      const modules = await studioModules();
+      if (!Object.hasOwn(modules, studioKey)) {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, {
+        'Content-Type': studioKey === 'uiCss' ? types.css : types.js,
+        'Cache-Control': 'no-cache',
+      });
+      response.end(modules[studioKey]);
       return;
     }
 

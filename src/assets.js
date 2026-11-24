@@ -90,9 +90,9 @@ export function createAssets(studios) {
       id, { name: anim.n, frameCount: anim.f.length, fps: anim.fps, tool: anim.tool },
     ])),
     metadata: character.metadata,
-  }, ({ config, animation = 'idle', frame = 0, direction = 'front' } = {}) => {
+  }, ({ config, animation = 'idle', frame = 0, direction = 'front', shadow = true, rank = 0 } = {}) => {
     const normalized = character.createCharacter(config);
-    return character.renderCharacterSVG(normalized, { an: animation, f: frame, dir: direction, s: 1, sh: 1 });
+    return character.renderCharacterSVG(normalized, { an: animation, f: frame, dir: direction, s: 1, sh: Number(shadow), rank });
   });
 
   const terrain = register(island, {
@@ -118,6 +118,10 @@ export function createAssets(studios) {
 }
 
 export function describeInteraction(object, assets) {
+  if (object.interaction?.job) {
+    const { job: type, counter, ability = type, resourceId } = object.interaction;
+    return { type, counter, ability, resourceId, positions: object.interactionPoints, waterTarget: object.waterTarget };
+  }
   const fish = object.type === 'fishing_spot';
   const crop = object.type === 'crop';
   const sourceType = object.type === 'coconut' ? 'palm_tree' : object.type;

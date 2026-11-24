@@ -6,10 +6,11 @@ import * as resource from '/studio/resource.js';
 import * as wildlife from '/studio/wildlife.js';
 import * as studioUI from '/studio/ui.js';
 import { createAssets } from './assets.js';
-import { screenToWorld, tileToWorld, worldToTile, zoomAt } from './geometry.js';
-import { createRenderer } from './render.js';
+import { screenToWorld, tileToWorld, worldToScreen, worldToTile, zoomAt } from './geometry.js';
+import { createRenderer, svgUrl } from './render.js';
 import { createUI } from './ui.js';
-import { createWorld, previewPlacement, updateWorld } from './world.js';
+import { createWorld, enableWildlifeDirector, previewPlacement, updateWorld } from './world.js';
+import { cameraWorldRect } from './wildlife-director.js';
 import { startGameplay } from './gameplay.js';
 import { landmarks } from './progression.js';
 import { advanceOffline, readVillage, restoreVillage, saveVillage } from './save.js';
@@ -26,6 +27,9 @@ let hiddenAt = null;
 let replacingVillage = false;
 const size = world.map.meta.tileSize;
 const canvas = document.getElementById('island');
+const dropHint = document.getElementById('drop-action');
+const dropIcon = dropHint.querySelector('img');
+const dropLabel = dropHint.querySelector('span');
 const camera = { x: 0, y: 0, zoom: 2 };
 const view = {
   selectedVillager: null, selectedObject: null, debug: new URLSearchParams(location.search).get('debug') === '1',
@@ -106,23 +110,17 @@ function canvasPosition(event) {
   return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
 }
 
-function command(position, draggedVillager) {
-  const hit = renderer.pick(position, undefined, draggedVillager?.id);
-  if (hit?.hit === 'villager' && !draggedVillager) {
+function command(position) {
+  const hit = renderer.pick(position);
+  if (hit?.hit === 'villager') {
     selectVillager(hit.entity.id);
     return;
   }
   ui.inspect(position, hit);
   view.selectedObject = hit?.hit === 'object' ? hit.entity.id : null;
-  const villager = draggedVillager || selectedVillager();
+  const villager = selectedVillager();
   if (hit?.hit === 'collectible' && hit.entity.id.startsWith('preview_')) {
     ui.notify(assets.registry.get(hit.entity.assetId).name + ' · developer preview');
-    return;
-  }
-  if (draggedVillager) {
-    const ref = hit && { kind: hit.hit, id: hit.entity.id };
-    const error = gameplay.drop(draggedVillager, worldToTile(position, size), ref);
-    if (error) ui.notify(error);
     return;
   }
   if (hit) {
@@ -141,6 +139,54 @@ function command(position, draggedVillager) {
 }
 
 let pointer = null;
+const dropRef = hit => hit && { kind: hit.hit, id: hit.entity.id };
+
+function refreshDropPreview() {
+  if (!view.drag) return;
+  const { position } = view.drag;
+  const hit = renderer.pick(position, undefined, pointer.villager.id);
+  const { tile, label, icon } = gameplay.inspectDrop(pointer.villager, worldToTile(position, size), dropRef(hit));
+  Object.assign(view.drag, { landing: tile, label, target: hit });
+  dropHint.hidden = !label;
+  if (!label) return;
+  if (dropHint.dataset.icon !== icon) {
+    dropHint.dataset.icon = icon;
+    dropIcon.src = svgUrl(assets.registry.get(icon).svg());
+  }
+  if (dropLabel.textContent !== label) dropLabel.textContent = label;
+}
+
+function updateDragPosition() {
+  view.drag.position = screenToWorld(pointer.screen, camera);
+}
+
+function positionDropHint() {
+  if (dropHint.hidden || !view.drag.landing) return;
+  const anchor = worldToScreen(tileToWorld(view.drag.landing, size), camera);
+  const margin = dropHint.offsetWidth / 2 + 6;
+  dropHint.style.left = `${Math.round(Math.max(margin, Math.min(canvas.clientWidth - margin, anchor.x)))}px`;
+  dropHint.style.top = `${Math.round(Math.max(30, Math.min(pointer.screen.y - 46 * camera.zoom, anchor.y - 12)))}px`;
+}
+
+function liftVillager() {
+  if (!pointer?.villager || view.drag) return;
+  world.heldVillager = pointer.villager.id;
+  view.drag = { id: world.heldVillager, startedAt: performance.now() };
+  updateDragPosition();
+  refreshDropPreview();
+  positionDropHint();
+  canvas.classList.add('dragging');
+}
+
+function clearPointer() {
+  clearTimeout(pointer?.holdTimer);
+  pointer = null;
+  world.heldVillager = null;
+  view.drag = null;
+  dropHint.hidden = true;
+  canvas.classList.remove('dragging');
+}
+
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
   event.preventDefault();
@@ -152,13 +198,15 @@ canvas.addEventListener('pointerdown', event => {
   const start = canvasPosition(event);
   const villager = !view.placementType && event.button === 0
     ? renderer.pick(screenToWorld(start, camera), 'villager')?.entity : null;
-  pointer = { id: event.pointerId, start, x: camera.x, y: camera.y, villager, moved: false, button: event.button };
+  pointer = { id: event.pointerId, start, screen: start, x: camera.x, y: camera.y, villager, moved: false, button: event.button };
+  if (villager) pointer.holdTimer = setTimeout(liftVillager, 175);
   canvas.setPointerCapture(event.pointerId);
 });
 
 canvas.addEventListener('pointermove', event => {
   const screen = canvasPosition(event);
   if (pointer?.id === event.pointerId) {
+    pointer.screen = screen;
     const dx = screen.x - pointer.start.x;
     const dy = screen.y - pointer.start.y;
     if (Math.hypot(dx, dy) >= 5) pointer.moved = true;
@@ -167,11 +215,7 @@ canvas.addEventListener('pointermove', event => {
       camera.y = Math.round(pointer.y + dy);
       canvas.classList.add('dragging');
     }
-    if (pointer.moved && pointer.villager) {
-      world.heldVillager = pointer.villager.id;
-      view.drag = { id: pointer.villager.id, position: screenToWorld(screen, camera) };
-      canvas.classList.add('dragging');
-    }
+    if (pointer.moved && pointer.villager) liftVillager();
   }
   if (view.placementType) {
     const definition = assets.buildings.find(building => building.type === view.placementType);
@@ -183,13 +227,12 @@ canvas.addEventListener('pointermove', event => {
 canvas.addEventListener('pointerup', event => {
   if (pointer?.id !== event.pointerId) return;
   const { villager, moved, button } = pointer;
-  pointer = null;
-  world.heldVillager = null;
-  view.drag = null;
-  canvas.classList.remove('dragging');
+  const held = Boolean(view.drag);
+  clearPointer();
   if (button !== 0 || (moved && !villager)) return;
+  const position = screenToWorld(canvasPosition(event), camera);
   if (view.placementType) {
-    const tile = worldToTile(screenToWorld(canvasPosition(event), camera), size);
+    const tile = worldToTile(position, size);
     const error = gameplay.place(view.placementType, tile);
     if (error) ui.notify(error);
     else {
@@ -198,15 +241,18 @@ canvas.addEventListener('pointerup', event => {
     }
     return;
   }
-  if (moved && villager) selectVillager(villager.id);
-  command(screenToWorld(canvasPosition(event), camera), moved ? villager : null);
+  if (held) {
+    const hit = renderer.pick(position, undefined, villager.id);
+    const error = gameplay.drop(villager, worldToTile(position, size), dropRef(hit));
+    selectVillager(villager.id);
+    if (error) ui.notify(error);
+    return;
+  }
+  command(position);
 });
 
-for (const event of ['pointercancel', 'lostpointercapture']) canvas.addEventListener(event, () => {
-  pointer = null;
-  world.heldVillager = null;
-  view.drag = null;
-  canvas.classList.remove('dragging');
+for (const event of ['pointercancel', 'lostpointercapture']) canvas.addEventListener(event, input => {
+  if (pointer?.id === input.pointerId) clearPointer();
 });
 
 window.addEventListener('keydown', event => {
@@ -215,7 +261,11 @@ window.addEventListener('keydown', event => {
     ui.togglePause();
   }
   if (event.key === 'Escape') {
-    if (view.placement || view.placementType) {
+    if (pointer) {
+      const { id } = pointer;
+      clearPointer();
+      if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+    } else if (view.placement || view.placementType) {
       view.placementType = null;
       view.placement = null;
     } else ui.closeMenu();
@@ -227,16 +277,27 @@ if (view.debug) {
   document.getElementById('debug').click();
 }
 resetCamera();
+const wildlifeDirector = enableWildlifeDirector(world);
 ui.refreshStatus();
 let last = performance.now();
 let lastStatus = 0;
+let lastPreview = 0;
 function frame(now) {
   if (document.hidden) {
     last = now;
     requestAnimationFrame(frame);
     return;
   }
+  wildlifeDirector.setView(cameraWorldRect(camera, canvas.clientWidth, canvas.clientHeight));
   updateWorld(world, Math.max(0, Math.min(0.1, (now - last) / 1000)));
+  if (view.drag) {
+    updateDragPosition();
+    if (now - lastPreview >= 55) {
+      refreshDropPreview();
+      positionDropHint();
+      lastPreview = now;
+    }
+  }
   renderer.render();
   if (now - lastStatus >= 100) {
     ui.refreshStatus();

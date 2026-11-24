@@ -3,6 +3,7 @@ import { tileToWorld, walkable, worldToTile } from './geometry.js';
 import { debugOptions, svgUrl } from './render.js';
 import { abilities } from './world.js';
 import { construction, costLabel, landmarks, researchProjects } from './progression.js';
+import { skillProgress, villagerQuirks, villagerSkills } from './villagers.js';
 
 const element = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char =>
@@ -222,7 +223,13 @@ export function createUI(world, view, actions) {
     const selected = state.villagers.find(villager => villager.id === view.selectedVillager);
     const profile = selected ? `<div class="row">${portrait(selected, 'portrait')}<div><h3>${escape(selected.name)}</h3>
       <p>${escape(selected.lifeStage)} · Age <span id="villager-age">${selected.age}</span></p><p id="villager-task"></p>
-      <p id="villager-needs"></p><p id="villager-skills"></p>
+      <p id="villager-needs"></p>
+      <p class="villager-quirks">${(selected.quirks || []).map(quirk => escape(villagerQuirks[quirk])).join(' · ')}</p>
+      <div class="villager-skills" aria-label="Skills">${Object.entries(villagerSkills).map(([key, skill]) => `
+        <div class="villager-skill" data-skill="${key}">
+          <span>${skill.label}</span><b class="skill-rank"></b>
+          <progress max="1" value="0" aria-label="${skill.label} experience"></progress><small></small>
+        </div>`).join('')}</div>
       ${selected.relationships.children?.length ? `<p>Children: ${selected.relationships.children.length}</p>` : ''}
       ${btn('Stop work', { v: 's', act: 'stop-work' })}</div></div>` : '';
     return profile + `<div class="entries">${state.villagers.map(villager =>
@@ -351,7 +358,22 @@ export function createUI(world, view, actions) {
     if (!villager || !element('villager-needs')) return;
     element('villager-age').textContent = villager.age;
     element('villager-needs').textContent = `Health ${Math.round(villager.needs.health)}% · Fed ${villager.needs.hunger}% · Energy ${Math.round(villager.needs.energy)}%`;
-    element('villager-skills').textContent = Object.entries(villager.skills).map(([id, xp]) => `${id} ${xp}`).join(' · ');
+    for (const row of content.querySelectorAll('[data-skill]')) {
+      const { xp, progress, rank, next, tier } = skillProgress(villager, row.dataset.skill);
+      const current = row.querySelector('.skill-rank');
+      if (current.textContent !== rank.name) {
+        current.textContent = rank.name;
+        current.dataset.tier = tier;
+      }
+      const bar = row.querySelector('progress');
+      const label = next ? `${xp} / ${next.threshold} XP` : `${xp} XP`;
+      if (bar.value !== progress) bar.value = progress;
+      const detail = row.querySelector('small');
+      if (detail.textContent !== label) {
+        detail.textContent = label;
+        bar.setAttribute('aria-valuetext', label);
+      }
+    }
   }
 
   function inspect(position, hit) {

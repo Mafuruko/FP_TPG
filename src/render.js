@@ -1,4 +1,11 @@
 import { tileToWorld, worldToTile } from './geometry.js';
+import { birdVisuals } from './birds.js';
+import { dolphinVisuals } from './dolphin.js';
+import { fishVisuals, waterAt } from './fish.js';
+import { contactVisual, groundPosition, villagerFrame } from './ground.js';
+import { turtleVisuals } from './turtle.js';
+import { jobVisual } from './villagers.js';
+import { wildlifeOpacity } from './wildlife-director.js';
 
 export const svgUrl = svg => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 export const debugOptions = {
@@ -18,6 +25,7 @@ export function createRenderer(canvas, world, camera, view) {
   const { map, assets, state } = world;
   const { tileSize, pixelWidth, pixelHeight } = map.meta;
   const images = new Map();
+  const spriteVariants = new WeakMap();
   const hitMasks = new WeakMap();
   const maskCanvas = document.createElement('canvas');
   const maskContext = maskCanvas.getContext('2d', { willReadFrequently: true });
@@ -56,12 +64,78 @@ export function createRenderer(canvas, world, camera, view) {
     if (x + asset.width < -camera.x / camera.zoom || y + asset.height < -camera.y / camera.zoom
       || x > (canvas.clientWidth - camera.x) / camera.zoom || y > (canvas.clientHeight - camera.y) / camera.zoom) return;
     const key = [asset.id, options?.config && JSON.stringify(options.config),
-      options?.direction, options?.animation, options?.frame].join('|');
+      options?.direction, options?.animation, options?.frame, options?.shadow, options?.rank].join('|');
     const spriteImage = image(key, () => asset.svg(options));
-    drawImage(spriteImage, x, y);
+    if (sprite.opacity === 0) return;
+    if (sprite.opacity < 1) {
+      context.save();
+      context.globalAlpha = sprite.opacity;
+    }
+    if (sprite.impact && spriteImage.complete && spriteImage.naturalWidth) {
+      const { wide, tall } = sprite.impact;
+      context.drawImage(spriteImage, x - wide / 2, y - tall, asset.width + wide, asset.height + tall);
+    } else if (sprite.angle || sprite.aquatic?.tint) drawSpriteVariant(spriteImage, sprite);
+    else drawImage(spriteImage, x, y);
+    if (sprite.opacity < 1) context.restore();
     if (hit && spriteImage.complete && spriteImage.naturalWidth) {
       hits.push({ entity, x, y, width: asset.width, height: asset.height, hit, image: spriteImage });
     }
+  }
+
+  function drawSpriteVariant(image, sprite) {
+    if (!image.complete || !image.naturalWidth) return;
+    const { asset, x, y, angle } = sprite;
+    const { width, height, anchor: { x: center } } = asset;
+    const tint = sprite.aquatic?.tint;
+    const key = `${angle || 0}|${tint?.color || ''}|${tint?.alpha || 0}`;
+    if (!spriteVariants.has(image)) spriteVariants.set(image, new Map());
+    const variants = spriteVariants.get(image);
+    if (!variants.has(key)) {
+      const pitch = Math.tan(angle * Math.PI / 180);
+      const margin = Math.ceil(Math.max(center, width - center) * Math.abs(pitch));
+      const layer = document.createElement('canvas');
+      layer.width = width;
+      layer.height = height + margin * 2;
+      const pixels = layer.getContext('2d');
+      // Offset whole source columns at native resolution before scaling with the camera.
+      if (angle) {
+        for (let column = 0; column < width; column++) {
+          const offset = Math.round((column - center) * pitch);
+          pixels.drawImage(image, column, 0, 1, height, column, margin + offset, 1, height);
+        }
+      } else pixels.drawImage(image, 0, 0);
+      if (tint) {
+        pixels.globalCompositeOperation = 'source-atop';
+        pixels.globalAlpha = tint.alpha;
+        pixels.fillStyle = tint.color;
+        pixels.fillRect(0, 0, layer.width, layer.height);
+      }
+      variants.set(key, { layer, margin });
+    }
+    const { layer, margin } = variants.get(key);
+    context.drawImage(layer, x, y - margin);
+  }
+
+  function drawContactShadow(sprite, shadow, color) {
+    const { shadowWidth, shadowHeight, shadowOpacity } = shadow;
+    const left = Math.round(sprite.position.x - shadowWidth / 2);
+    const top = Math.round(sprite.position.y - shadowHeight / 2);
+    context.save();
+    context.fillStyle = color;
+    context.globalAlpha = shadowOpacity * (sprite.opacity ?? 1);
+    for (let row = 0; row < shadowHeight; row++) {
+      const inset = row === 0 || row === shadowHeight - 1 ? Math.round(shadowWidth / 5) : 0;
+      context.fillRect(left + inset, top + row, shadowWidth - inset * 2, 1);
+    }
+    context.restore();
+  }
+
+  function drawGroundParticle(particle) {
+    context.save();
+    context.fillStyle = particle.color;
+    context.globalAlpha = (1 - particle.age / particle.life) * 0.86;
+    context.fillRect(Math.round(particle.x), Math.round(particle.y), 1, particle.age < 0.09 ? 2 : 1);
+    context.restore();
   }
 
   function objects() {
@@ -77,11 +151,23 @@ export function createRenderer(canvas, world, camera, view) {
       const config = { ...entity.appearance, name: entity.name, lifeStage: entity.lifeStage };
       const animation = entity.animation;
       const definition = assets.villager.animations[animation];
-      const fps = assets.characterFps(animation, config);
-      return describeSprite(entity, assets.villager, {
+      const skill = jobVisual(entity);
+      const tier = skill?.tier ?? 0;
+      if (tier && animation === 'gather' && !config.accessories.includes('bag')) config.accessories = [...config.accessories, 'bag'];
+      const fps = assets.characterFps(animation, config) / (skill && entity.work.phase === 'work' ? skill.rank.workTime : 1);
+      const sprite = describeSprite(entity, assets.villager, {
         config, animation, direction: entity.direction,
-        frame: frameAt({ ...definition, fps }, state.time.seconds),
-      }, entity.position, 'villager');
+        frame: villagerFrame(entity, definition.frameCount) ?? frameAt({ ...definition, fps }, state.time.seconds),
+        shadow: false, rank: tier,
+      }, groundPosition(entity), 'villager');
+      sprite.ground = contactVisual(entity, 'villager');
+      sprite.y += sprite.ground.offsetY;
+      const landingAge = state.time.seconds - entity.landedAt;
+      if (landingAge >= 0 && landingAge < 0.19) {
+        sprite.impact = landingAge < 0.085 ? { wide: 2, tall: -3 } : { wide: -2, tall: 1 };
+        if (landingAge >= 0.085) sprite.y -= 1;
+      }
+      return sprite;
     });
   }
 
@@ -98,10 +184,93 @@ export function createRenderer(canvas, world, camera, view) {
     return state.wildlife.map(entity => {
       const asset = assets.registry.get(entity.assetId);
       const animation = entity.animation;
-      return describeSprite(entity, asset, {
-        animation, direction: entity.direction, frame: frameAt(asset.animations[animation], state.time.seconds),
+      const aquatic = fishVisuals(entity) || dolphinVisuals(entity) || turtleVisuals(entity);
+      const sprite = describeSprite(entity, asset, {
+        animation, direction: entity.direction,
+        frame: entity.land?.frame ?? aquatic?.frame ?? entity.bird?.animationFrame ?? frameAt(asset.animations[animation],
+          entity.bird ? entity.bird.animTime ?? 0 : state.time.seconds),
       }, entity.position);
+      const bird = birdVisuals(entity, asset);
+      sprite.opacity = wildlifeOpacity(entity);
+      sprite.y += entity.ecology?.sink || 0;
+      const motion = entity.ecology?.motion;
+      if (motion?.propId && (motion.fading || motion.kind === 'arrive' && sprite.opacity < 0.55)) {
+        const prop = world.objects.get(motion.propId);
+        if (prop) sprite.depth = Math.min(sprite.depth, prop.anchor.y - 0.1);
+      }
+      if (bird) {
+        sprite.bird = bird;
+        sprite.y -= bird.altitude;
+        sprite.angle = bird.angle;
+      }
+      if (aquatic) {
+        sprite.aquatic = aquatic;
+        sprite.x += aquatic.offsetX ?? 0;
+        sprite.y += aquatic.offsetY;
+        sprite.angle = aquatic.bank;
+      }
+      if (entity.land) {
+        sprite.ground = contactVisual(entity, asset.key);
+        sprite.y += sprite.ground.offsetY;
+      }
+      if (entity.turtle && aquatic.contact > 0) {
+        sprite.ground = contactVisual(entity, asset.key);
+        sprite.ground.shadowOpacity *= aquatic.contact;
+      }
+      return sprite;
     });
+  }
+
+  function paintSubmergedWildlife(sprite) {
+    const { x, y, asset, aquatic } = sprite;
+    const start = worldToTile({ x, y: y - 4 }, tileSize);
+    const end = worldToTile({ x: x + asset.width - 1, y: y + asset.height + 3 }, tileSize);
+    context.save();
+    context.beginPath();
+    for (let ty = start.y; ty <= end.y; ty++) {
+      for (let tx = start.x; tx <= end.x; tx++) {
+        const point = tileToWorld({ x: tx, y: ty }, tileSize);
+        if (waterAt(map, point) === aquatic.water && (!aquatic.deepOnly || map.terrainGrid[ty][tx] === 'deep_water')) {
+          context.rect(tx * tileSize, ty * tileSize, tileSize, tileSize);
+        }
+      }
+    }
+    context.clip();
+    paintSprite(sprite);
+    context.restore();
+  }
+
+  function drawFishParticles(splash) {
+    context.save();
+    context.fillStyle = splash ? '#dbf6fc' : '#bce9ee';
+    for (const particle of world.fishParticles) {
+      if ((particle.kind === 'splash') !== splash) continue;
+      const x = Math.round(particle.x + Math.sin(particle.age * 8 + particle.phase) * (splash ? 0 : 1.4));
+      const y = Math.round(particle.y);
+      if (!splash && waterAt(map, { x, y }) !== particle.water) continue;
+      context.globalAlpha = (1 - particle.age / particle.life) * (splash ? 0.9 : 0.72);
+      context.fillRect(x, y, particle.size, 1);
+      if (particle.size === 2) context.fillRect(x, y + 1, 1, 1);
+    }
+    context.restore();
+  }
+
+  function drawShoreRipples() {
+    context.save();
+    context.fillStyle = '#d9f1ec';
+    for (const ripple of world.shoreRipples) {
+      const progress = ripple.age / ripple.life;
+      const radius = 3 + Math.round(progress * 11);
+      context.globalAlpha = (1 - progress) * 0.73;
+      for (let x = -radius; x <= radius; x += 2) {
+        const edge = Math.round(Math.sqrt(1 - (x / radius) ** 2) * radius * 0.43);
+        for (const o of new Set([-edge, edge])) {
+          const pixel = { x: Math.round(ripple.x + x), y: Math.round(ripple.y + o) };
+          if (waterAt(map, pixel) === 'ocean_001') context.fillRect(pixel.x, pixel.y, 1, 1);
+        }
+      }
+    }
+    context.restore();
   }
 
   function collectibles() {
@@ -154,6 +323,38 @@ export function createRenderer(canvas, world, camera, view) {
     context.globalAlpha = 0.75;
     drawImage(image(asset.id, asset.svg), origin.x * tileSize, origin.y * tileSize + asset.metadata.sprite.offset.y);
     context.restore();
+  }
+
+  function drawDrag(sprite) {
+    const { position, landing, target, label, startedAt } = view.drag;
+    if (landing) {
+      const point = tileToWorld(landing, tileSize);
+      drawContactShadow({ position: point }, { shadowWidth: 12, shadowHeight: 4, shadowOpacity: 0.43 }, '#1b1926');
+      drawMarker(point, label ? '#e8d180' : '#ddd1ac', 7);
+    }
+    if (label && target) {
+      const box = target.width ? target : { ...tileToWorld(worldToTile(position, tileSize), tileSize), width: 16, height: 16 };
+      const left = target.width ? box.x - 1 : box.x - 8;
+      const top = target.width ? box.y - 1 : box.y - 8;
+      const right = left + box.width + 1;
+      const bottom = top + box.height + 1;
+      context.fillStyle = '#f9db87';
+      for (const x of [left, right]) {
+        for (const y of [top, bottom]) {
+          context.fillRect(x, y, 1, y === top ? 4 : -4);
+          context.fillRect(x, y, x === left ? 4 : -4, 1);
+        }
+      }
+    }
+    const { animations } = sprite.asset;
+    const fallback = sprite.entity.lifeStage === 'baby' ? 'cry' : 'celebrate';
+    const animation = animations.pickup ? 'pickup' : animations[fallback] ? fallback : 'idle';
+    const definition = animations[animation];
+    const frame = frameAt(definition, Math.max(0, performance.now() - startedAt) / 1000);
+    paintSprite(describeSprite(sprite.entity, sprite.asset, {
+      ...sprite.options, config: { ...sprite.options.config, heldObject: 'none' },
+      animation, frame, direction: 'front', rank: 0,
+    }, { x: Math.round(position.x), y: Math.round(position.y) - 8 }));
   }
 
   function drawDebug(sprites) {
@@ -244,15 +445,39 @@ export function createRenderer(canvas, world, camera, view) {
     const scenery = objects();
     const villagersOnMap = villagers();
     const foreground = scenery.filter(sprite => sprite.entity.canopy);
-    const entities = [...scenery.filter(sprite => sprite.entity.layer !== 'ground-decoration'),
+    const isFlat = sprite => sprite.entity.layer === 'ground-decoration' && sprite.entity.type !== 'tall_grass';
+    const animals = creatures();
+    const overCanopy = sprite => {
+      const motion = sprite.entity.ecology?.motion;
+      const inCover = motion?.propId && (motion.fading || motion.kind === 'arrive' && sprite.opacity < 0.55);
+      return sprite.bird?.altitude >= 18 && !inCover;
+    };
+    for (const sprite of animals) {
+      if (!sprite.aquatic?.submerged) continue;
+      if (sprite.ground) drawContactShadow(sprite, sprite.ground, '#224d51');
+      paintSubmergedWildlife(sprite);
+    }
+    drawFishParticles(false);
+    const entities = [...scenery.filter(sprite => !isFlat(sprite)),
       ...crops(), ...buildings(), ...villagersOnMap.filter(sprite => sprite.entity.id !== view.drag?.id),
-      ...creatures(), ...collectibles()].sort((a, b) => a.depth - b.depth || a.x - b.x);
-    for (const sprite of scenery.filter(sprite => sprite.entity.layer === 'ground-decoration')) paintSprite(sprite);
-    for (const sprite of entities) paintSprite(sprite);
+      ...animals.filter(sprite => !overCanopy(sprite) && !sprite.aquatic?.submerged), ...collectibles()];
+    for (const sprite of scenery.filter(isFlat)) paintSprite(sprite);
+    for (const sprite of animals) if (sprite.bird) drawContactShadow(sprite, sprite.bird, '#1b1926');
+    const terrainEffects = world.groundParticles.map(particle => ({ particle, depth: particle.groundY, x: particle.x }));
+    for (const item of [...entities, ...terrainEffects].sort((a, b) => a.depth - b.depth || a.x - b.x)) {
+      if (item.particle) drawGroundParticle(item.particle);
+      else {
+        if (item.ground) drawContactShadow(item, item.ground, '#302a23');
+        paintSprite(item);
+      }
+    }
     for (const sprite of foreground) drawImage(
       image(`canopy:${sprite.asset.id}`, () => assets.canopySvg(sprite.asset.id)), sprite.x, sprite.y,
     );
     drawEffects();
+    drawShoreRipples();
+    drawFishParticles(true);
+    for (const sprite of animals) if (overCanopy(sprite)) paintSprite(sprite);
     if (state.abilities.fish) {
       const wave = assets.registry.get('icon_arrowD');
       for (const spot of map.fishingSpots) {
@@ -262,7 +487,7 @@ export function createRenderer(canvas, world, camera, view) {
       }
     }
     drawPreview();
-    const sprites = [...scenery.filter(sprite => sprite.entity.layer === 'ground-decoration'), ...entities];
+    const sprites = [...scenery.filter(isFlat), ...entities];
     drawDebug(sprites);
     const selected = sprites.find(sprite => sprite.entity.id === view.selectedVillager);
     if (selected) {
@@ -272,15 +497,15 @@ export function createRenderer(canvas, world, camera, view) {
     }
     const object = world.objects.get(view.selectedObject);
     if (object) drawStudioMarker('marker_interactable', object.anchor || tileToWorld(object.standPosition, tileSize));
+    for (const sprite of villagersOnMap) {
+      const reaction = sprite.entity.reaction;
+      if (sprite.entity.id !== view.drag?.id && reaction?.until > state.time.seconds) {
+        drawStudioMarker(`icon_${reaction.icon}`, { x: sprite.position.x, y: sprite.y - 6 });
+      }
+    }
     if (view.drag) {
       const sprite = villagersOnMap.find(entry => entry.entity.id === view.drag.id);
-      if (sprite) {
-        drawStudioMarker('marker_picked_up', view.drag.position);
-        const { x, y } = view.drag.position;
-        paintSprite(describeSprite(sprite.entity, sprite.asset, {
-          ...sprite.options, animation: 'idle', frame: 0,
-        }, { x, y: y - 6 }));
-      }
+      if (sprite) drawDrag(sprite);
     }
   }
 

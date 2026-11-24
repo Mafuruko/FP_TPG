@@ -13,6 +13,7 @@
 <body>
   <main class="gu pixel">
     <canvas id="island" aria-label="Interactive island map" aria-describedby="controls"></canvas>
+    <div id="drop-action" role="status" hidden><img width="16" height="16" alt=""><span></span></div>
     <div id="studio-hud"></div>
     <section id="panel" class="panel gu-panel" aria-labelledby="panel-title" hidden>
       <div class="panel-heading">
@@ -26,7 +27,7 @@
     </section>
     <div class="bottom">
       <button type="button" id="debug" class="gu-btn s" aria-pressed="false" aria-controls="debug-panel">Debug</button>
-      <p id="controls">Drag to pan · Scroll to zoom · Select a villager, then click a tile to move</p>
+      <p id="controls">Drag to pan · Scroll to zoom · Hold and drag a villager to give them a job</p>
     </div>
     <section id="debug-panel" class="panel gu-panel debug" aria-label="Developer tools" hidden>
       <h2>Developer tools</h2>

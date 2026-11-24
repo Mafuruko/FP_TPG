@@ -1,5 +1,12 @@
 import { describeInteraction } from './assets.js';
-import { findRoute, neighbors, sameTile, tileToWorld, walkable } from './geometry.js';
+import { birdAnimations, initializeBird, updateBird } from './birds.js';
+import { initializeDolphin, updateDolphin } from './dolphin.js';
+import { fishAnimations, initializeFish, updateFish, updateFishParticles } from './fish.js';
+import { recordGroundTravel, resolveVillagerSpacing, updateGroundParticles, villagerGroundTuning } from './ground.js';
+import { initializeLandWildlife, landWildlifeTuning, updateLandWildlife } from './land-wildlife.js';
+import { findRoute, sameTile, tileToWorld, walkable } from './geometry.js';
+import { initializeTurtle, updateShoreRipples, updateTurtle } from './turtle.js';
+import { createWildlifeDirector } from './wildlife-director.js';
 
 export const abilities = [
   ['gather', 'Gathering', 'gather', true], ['chop', 'Woodcutting', 'chop', true],
@@ -38,7 +45,7 @@ export function createResourceManager(amounts, limits = {}) {
   };
 }
 
-export function habitatMatches(map, animal, tile, habitat) {
+export function habitatMatches(map, animal, tile, habitat, collision = map.collisionGrid) {
   const { x, y } = tile;
   const terrain = map.terrainGrid[y]?.[x];
   const region = map.regionGrid[y]?.[x];
@@ -46,16 +53,16 @@ export function habitatMatches(map, animal, tile, habitat) {
   return habitat.terrain.includes(terrain)
     && (!habitat.regions || habitat.regions.includes(region))
     && (!habitat.waterBodies || habitat.waterBodies.includes(water))
-    && (animal.movementType !== 'ground' || walkable(map.collisionGrid, tile));
+    && (animal.movementType !== 'ground' || walkable(collision, tile));
 }
 
-export function habitatAllows(map, animal, tile) {
+export function habitatAllows(map, animal, tile, collision = map.collisionGrid) {
   const { width, height } = animal.collisionFootprint;
   const firstX = tile.x - Math.floor((width - 1) / 2);
   const habitats = Object.values(animal.metadata.habitatMapping);
   for (let dy = 0; dy < height; dy++) {
     for (let dx = 0; dx < width; dx++) {
-      if (!habitats.some(habitat => habitatMatches(map, animal, { x: firstX + dx, y: tile.y - dy }, habitat))) return false;
+      if (!habitats.some(habitat => habitatMatches(map, animal, { x: firstX + dx, y: tile.y - dy }, habitat, collision))) return false;
     }
   }
   return true;
@@ -80,7 +87,7 @@ function createWildlife(map, animals) {
     occupied.push(tile);
     return [{
       id: `animal_${index + 1}`, assetId: animal.id, tile, position: tileToWorld(tile, map.meta.tileSize),
-      direction: 'left', animation: animal.idle, route: [], roamIn: 1 + index * 0.31, moves: index,
+      direction: 'left', animation: animal.idle, route: [], moves: index,
     }];
   });
   return { instances, habitatTiles };
@@ -135,12 +142,61 @@ export function createWorld(assets) {
     weather: { current: 'clear' },
     settings: { musicVolume: 100 },
   };
-  return {
+  const world = {
     assets, map, state, resources: createResourceManager(state.resources), collision: map.collisionGrid.map(row => row.slice()),
     habitatTiles: wildlife.habitatTiles,
+    fishParticles: [],
+    groundParticles: [],
+    shoreRipples: [],
     objects: new Map([...map.objects, ...map.fishingSpots].map(object => [object.id, object])),
     collectiblePreviews: previewCollectibles(map, assets.collectibles),
   };
+  initializeWorldWildlife(world);
+  return world;
+}
+
+function birdCanLand(world, asset, tile) {
+  return walkable(world.collision, tile) && !world.map.waterBodyGrid[tile.y][tile.x]
+    && habitatAllows(world.map, asset, tile);
+}
+
+function turtleCanTravel(world, asset, tile, transit = false) {
+  const { width, height } = asset.collisionFootprint;
+  const firstX = tile.x - Math.floor((width - 1) / 2);
+  const habitats = Object.values(asset.metadata.habitatMapping);
+  for (let dy = 0; dy < height; dy++) {
+    for (let dx = 0; dx < width; dx++) {
+      const point = { x: firstX + dx, y: tile.y - dy };
+      const water = world.map.waterBodyGrid[point.y]?.[point.x];
+      const deepTransit = transit && water === 'ocean_001' && world.map.terrainGrid[point.y]?.[point.x] === 'deep_water';
+      if (!deepTransit && !habitats.some(habitat => habitatMatches(world.map, asset, point, habitat))) return false;
+      if (!water && !walkable(world.collision, point)) return false;
+    }
+  }
+  return true;
+}
+
+export function initializeWorldWildlife(world) {
+  for (const entity of world.state.wildlife) initializeAnimal(world, entity, world.assets.registry.get(entity.assetId));
+}
+
+function initializeAnimal(world, entity, asset, transit = false) {
+  if (birdAnimations[asset.key]) initializeBird(world, entity, asset, tile => birdCanLand(world, asset, tile));
+  if (fishAnimations[asset.key]) initializeFish(world, entity, asset);
+  if (asset.key === 'dolphin') initializeDolphin(world, entity, tile => habitatAllows(world.map, asset, tile));
+  if (landWildlifeTuning[asset.key]) initializeLandWildlife(entity, asset.key);
+  if (asset.key === 'turtle') initializeTurtle(world, entity, tile => turtleCanTravel(world, asset, tile, transit));
+}
+
+export function enableWildlifeDirector(world, options) {
+  world.wildlifeDirector = createWildlifeDirector(world, {
+    canTravel: (asset, tile, transit) => asset.key === 'turtle' ? turtleCanTravel(world, asset, tile, transit)
+      : habitatAllows(world.map, asset, tile, world.collision),
+    canLand: (asset, tile) => birdCanLand(world, asset, tile),
+    initialize: (entity, asset, transit) => initializeAnimal(world, entity, asset, transit),
+    advance: advanceEntity,
+  }, options);
+  return world.wildlifeDirector;
 }
 
 const mapFacing = { up: 'back', down: 'front', left: 'left', right: 'right' };
@@ -190,34 +246,32 @@ function advanceEntity(entity, distance, size, onDirection) {
   }
 }
 
-const roamAnimations = {
-  songbird: 'fly', seagull: 'fly', fish_fresh: 'swim', fish_coast: 'swim', dolphin: 'swim',
-  rabbit: 'hop', deer: 'walk', snake: 'slither', crab: 'walk',
-};
-
 function updateWildlife(world, time) {
+  updateFishParticles(world, time);
+  updateShoreRipples(world, time);
+  world.wildlifeDirector?.update(time);
   for (const entity of world.state.wildlife) {
+    if (entity.ecology?.motion && !world.wildlifeDirector) continue;
     const asset = world.assets.registry.get(entity.assetId);
-    entity.roamIn -= time;
-    if (entity.roamIn <= 0 && !entity.route.length) {
-      const adjacent = neighbors.map(offset => ({ x: entity.tile.x + offset.x, y: entity.tile.y + offset.y }));
-      const eligible = adjacent.filter(tile => habitatAllows(world.map, asset, tile)
-        && (asset.group !== 'fish' || world.map.waterBodyGrid[tile.y][tile.x] === world.map.waterBodyGrid[entity.tile.y][entity.tile.x]));
-      if (eligible.length) {
-        const tile = eligible[entity.moves++ % eligible.length];
-        entity.route.push(tile);
-        entity.animation = asset.key === 'turtle'
-          ? world.map.waterBodyGrid[tile.y][tile.x] ? 'swim' : 'crawl'
-          : roamAnimations[asset.key];
-      }
-      entity.roamIn = 2 + (entity.moves % 4) * 0.4;
+    if (world.wildlifeDirector?.step(entity, asset, time)) continue;
+    if (birdAnimations[asset.key]) {
+      updateBird(world, entity, asset, tile => birdCanLand(world, asset, tile), time);
+      continue;
     }
-    advanceEntity(entity, 12 * time, world.map.meta.tileSize, (dx, dy) => {
-      if (dx) entity.direction = dx < 0 ? 'left' : 'right';
-      else if (asset.dirs.includes('front')) entity.direction = dy < 0 ? 'back' : 'front';
-    });
-    if (!entity.route.length) {
-      entity.animation = asset.key === 'turtle' && !world.map.waterBodyGrid[entity.tile.y][entity.tile.x] ? 'rest' : asset.idle;
+    if (fishAnimations[asset.key]) {
+      updateFish(world, entity, asset, time);
+      continue;
+    }
+    if (asset.key === 'dolphin') {
+      updateDolphin(world, entity, asset, tile => habitatAllows(world.map, asset, tile), time);
+      continue;
+    }
+    if (landWildlifeTuning[asset.key]) {
+      updateLandWildlife(world, entity, asset, tile => habitatAllows(world.map, asset, tile, world.collision), advanceEntity, time);
+      continue;
+    }
+    if (asset.key === 'turtle') {
+      updateTurtle(world, entity, asset, tile => turtleCanTravel(world, asset, tile), advanceEntity, time);
     }
   }
 }
@@ -226,6 +280,7 @@ export function updateWorld(world, delta) {
   const { time, villagers } = world.state;
   if (time.paused || delta <= 0) return;
   const elapsed = delta * time.speed;
+  updateGroundParticles(world, elapsed);
   time.seconds += elapsed;
   time.minutes += elapsed * 5;
   if (time.minutes >= 1440) {
@@ -234,14 +289,21 @@ export function updateWorld(world, delta) {
   }
   for (const villager of villagers) {
     if (world.heldVillager === villager.id) continue;
-    if (!villager.route.length) continue;
-    villager.animation = villager.lifeStage === 'baby' ? 'crawl' : 'walk';
-    advanceEntity(villager, elapsed * 44, world.map.meta.tileSize, (dx, dy) => {
-      villager.direction = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back');
-    });
-    villager.previousStep = villager.route[0] || null;
-    if (!villager.route.length) finishMove(villager);
+    const before = { ...villager.position };
+    if (villager.route.length) {
+      const carrying = villager.work?.phase === 'deliver';
+      villager.animation = villager.lifeStage === 'baby' ? 'crawl' : carrying ? 'carry' : villager.snakeFlee ? 'run' : 'walk';
+      const speed = villagerGroundTuning[`${villager.animation}Speed`]
+        * (villager.lifeStage !== 'baby' && villager.quirks?.includes('fastWalker') ? 1.15 : 1);
+      advanceEntity(villager, elapsed * speed, world.map.meta.tileSize, (dx, dy) => {
+        villager.direction = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back');
+      });
+      villager.previousStep = villager.route[0] || null;
+      if (!villager.route.length) finishMove(villager);
+    }
+    recordGroundTravel(world, villager, before, elapsed);
   }
+  resolveVillagerSpacing(world, elapsed);
   world.gameplay?.advance(elapsed);
   updateWildlife(world, elapsed);
 }
