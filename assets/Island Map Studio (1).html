@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Island Map Studio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#f3ecdc;--pn:#fffaf0;--ink:#3b2a22;--mut:#7d6a58;--ac:#5f8a4f;--ln:#d9ccb0;--c1:#e9dfc8;--c2:#f6efdf;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1f1b16;--pn:#2b251e;--ink:#f1e8d4;--mut:#b3a58f;--ac:#8fbf7a;--ln:#463d31;--c1:#3a3228;--c2:#332c23}}
+:root[data-theme="dark"]{--bg:#1f1b16;--pn:#2b251e;--ink:#f1e8d4;--mut:#b3a58f;--ac:#8fbf7a;--ln:#463d31;--c1:#3a3228;--c2:#332c23}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,sans-serif}
+header{padding:12px 16px 0;max-width:1500px;margin:auto}h1{margin:0;font-size:20px}header p{margin:2px 0 0;color:var(--mut)}
+main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:12px;padding:12px;max-width:1500px;margin:auto}@media(max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--pn);border:1px solid var(--ln);border-radius:10px;padding:10px;min-width:0;margin-bottom:12px}h2{margin:0 0 6px;font-size:14px}
+select,input,button{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--ln);border-radius:6px;padding:3px 8px;max-width:100%}button{cursor:pointer}button:hover{border-color:var(--ac)}button.on{background:var(--ac);color:#fff}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0}.chk{display:inline-flex;gap:3px;align-items:center;font-size:13px;margin-right:6px}.chk input{width:auto}
+#vp{height:72vh;min-height:340px;overflow:hidden;position:relative;background:#2c4f63;border-radius:8px;cursor:grab;touch-action:none}#vp:fullscreen{height:100vh}
+#pan{position:absolute;left:0;top:0;transform-origin:0 0}#pan svg{display:block;position:absolute;left:0;top:0}#dbg{pointer-events:none}
+pre{background:var(--bg);border:1px solid var(--ln);border-radius:6px;padding:6px;font-size:11px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:4px 0}
+.grid{display:flex;flex-wrap:wrap;gap:8px}.cell{text-align:center;font-size:11px;color:var(--mut);background:var(--bg);border:1px solid var(--ln);border-radius:8px;padding:4px}.cell>div{display:flex;justify-content:center;align-items:center;gap:6px;min-height:40px;background:repeating-conic-gradient(var(--c1) 0 25%,var(--c2) 0 50%) 0 0/8px 8px;border-radius:4px}.cell svg{display:block}
+.lg span{display:inline-block;margin-right:8px;font-size:12px}.lg i{display:inline-block;width:10px;height:10px;margin-right:3px;vertical-align:middle}
+.err{cursor:pointer;font-size:12px;padding:2px 0;border-bottom:1px solid var(--ln)}.err.e{color:#c0503c}.err.o{color:var(--ac)}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:6px 14px;border-radius:20px;opacity:0;transition:.3s;pointer-events:none}
+</style><style id="lyr"></style></head><body>
+<header><h1>🗺️ Island Map Studio</h1><p>80×64 tile handcrafted island · 16px tiles · layered SVG · gameplay metadata from one authoritative definition</p></header>
+<main><div>
+<div class="card"><div class="row"><button id="zi">＋</button><button id="zo">－</button><button id="fit">Fit</button><button id="rst">Reset</button><button id="fs">Fullscreen</button><span id="zl" style="color:var(--mut)"></span><span id="hov" style="color:var(--mut)"></span></div>
+<div id="vp"><div id="pan"><div id="mapw"></div><svg id="dbg" viewBox="0 0 1280 1024" shape-rendering="crispEdges"></svg></div></div>
+<div class="lg" id="lg"></div></div>
+<div class="card"><h2>Inspector</h2><div class="row"><select id="fsel"></select><button id="bcp">Copy JSON</button><select id="osel" style="display:none"></select></div><pre id="insp">Click a tile or object on the map.</pre></div>
+<div class="card"><h2>Environment Asset Gallery</h2><div class="row"><select id="gcat"></select></div><div class="grid" id="gal"></div></div>
+<div class="card"><h2>Validation</h2><div class="row"><button id="bval">Validate Map</button><span id="vsum" style="color:var(--mut)"></span></div><div id="vres"></div></div>
+</div><aside>
+<div class="card"><h2>Map State Preview (environment only)</h2><div class="row" id="sts"></div></div>
+<div class="card"><h2>Layers</h2><div id="lays"></div></div>
+<div class="card"><h2>Debug overlays</h2><div id="dbgs"></div></div>
+<div class="card"><h2>Export</h2><label class="chk">PNG scale <select id="xs"><option>1</option><option>2</option><option>4</option></select></label>
+<div class="row"><button data-x="svg">island-map.svg</button><button data-x="png">island-map.png</button></div>
+<div class="row"><select id="xl"><option value="terrain">terrain</option><option value="water">water</option><option value="decor">ground-decorations</option><option value="res">resource-objects</option><option value="land">landmarks</option><option value="fore">foreground</option></select><button data-x="lsvg">Layer SVG</button><button data-x="lpng">Layer PNG</button></div>
+<div class="row"><button data-x="tset">Tileset SVG+PNG</button><button data-x="atlas">Object atlas PNG+JSON</button></div>
+<div class="row"><select id="xd"></select><button data-x="json">Export JSON</button><button data-x="all">Combined JSON</button></div></div>
+<div class="card"><h2>Animations</h2><div class="grid" id="ans"></div></div>
+</aside></main><div id="toast"></div>
+<script>
+/* ===== Island Map Studio =====
+ Coordinates: origin top-left, x right, y down, tiles 0..79 x 0..63, 16px each. grid[y][x].
+ Object convention: tile={x,y} is the LEFT tile of the footprint's BOTTOM row; footprint extends right (width) and up (height).
+ Sprite anchor = bottom-center of footprint in px: (x*16+width*8, y*16+16). sortY = anchor.y (depth sorting). Collision uses footprints only, never sprite bounds. */
+const TS=16,MW=80,MH=64,OUT='#3b2a22';
+const $=s=>document.querySelector(s),esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const HH=(x,y,s=0)=>{let h=Math.imul(x*73856093^y*19349663^s*83492791,0x85ebca6b);h^=h>>>13;h=Math.imul(h,0xc2b2ae35);return((h^h>>>16)>>>0)/4294967296};
+const sr=a=>()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+const TERRAIN_TYPES={deep_water:{walkable:false,buildable:false,farmable:false,water:true,fishable:true},shallow_water:{walkable:false,buildable:false,farmable:false,water:true,fishable:true},sand:{walkable:true,buildable:false,farmable:false,water:false},grass:{walkable:true,buildable:true,farmable:false,water:false},dirt:{walkable:true,buildable:true,farmable:false,water:false},fertile_soil:{walkable:true,buildable:false,farmable:true,water:false},rock:{walkable:true,buildable:false,farmable:false,water:false},cliff:{walkable:false,buildable:false,farmable:false,water:false}};
+/* ---------- pixel sprite toolkit ---------- */
+function runs(m,w,h){const g={};for(let y=0;y<h;y++){let x=0;while(x<w){const c=m.get(y*w+x);if(!c){x++;continue}let n=1;while(x+n<w&&m.get(y*w+x+n)===c)n++;g[c]=(g[c]||'')+`M${x} ${y}h${n}v1h-${n}z`;x+=n}}return Object.entries(g).map(([c,d])=>`<path fill="${c}" d="${d}"/>`).join('')}
+function Sp(w,h,fn,ol=1){const m=new Map(),P=(x,y,c)=>{x=Math.floor(x);y=Math.floor(y);if(c&&x>=0&&y>=0&&x<w&&y<h)m.set(y*w+x,c)},R=(x,y,a,b,c)=>{for(let j=0;j<b;j++)for(let i=0;i<a;i++)P(x+i,y+j,c)},
+B=(cx,cy,rx,ry,cs)=>{for(let y=Math.floor(cy-ry);y<=cy+ry;y++)for(let x=Math.floor(cx-rx);x<=cx+rx;x++){const u=(x+.5-cx)/rx,v=(y+.5-cy)/ry;if(u*u+v*v<=1){const t=u+v;P(x,y,t<-.5?cs[0]:t<.4?cs[1]:cs[2])}}},
+L=(x0,y0,x1,y1,c,t=1)=>{const n=Math.max(Math.abs(x1-x0),Math.abs(y1-y0),1);for(let i=0;i<=n;i++)R(Math.round(x0+(x1-x0)*i/n),Math.round(y0+(y1-y0)*i/n),t,t,c)};
+fn(P,B,R,L,m);if(ol){const o=[];m.forEach((c,k)=>{const x=k%w,y=(k/w)|0;[[1,0],[-1,0],[0,1],[0,-1]].forEach(([a,b])=>{const X=x+a,Y=y+b;if(X>=0&&Y>=0&&X<w&&Y<h&&!m.has(Y*w+X))o.push(Y*w+X)})});o.forEach(k=>m.set(k,OUT))}return{w,h,m}}
+/* ---------- terrain tiles (16x16) ---------- */
+const TL={};function tile(name,base,det,n,fn){const r=sr([...name].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7)),m=new Map(),P=(x,y,c)=>m.set(((y&15)<<4)+(x&15),c);for(let i=0;i<256;i++)m.set(i,base);for(let i=0;i<n;i++)P(r()*16|0,r()*16|0,det[i%det.length]);fn&&fn(P,r);TL[name]=m}
+tile('grass_main','#73965B',['#80a064','#68894f'],14);tile('grass_light','#80a064',['#8fb070','#73965B'],12);tile('grass_dark','#648a52',['#5a7e4a','#73965B'],14);tile('grass_texture','#73965B',['#5f8250','#8aab6a'],28);
+tile('grass_flowers','#73965B',['#80a064'],8,(P,r)=>{['#f2d95a','#f4f0e0','#e8708a'].forEach(c=>{const x=2+r()*11|0,y=2+r()*11|0;P(x,y,c);P(x+1,y,c)})});
+tile('grass_stones','#73965B',['#68894f'],8,(P,r)=>{const x=3+r()*9|0,y=3+r()*9|0;P(x,y,'#9a9488');P(x+1,y,'#b8b2a4');P(x,y+1,'#78726a');P(x+1,y+1,'#9a9488')});
+tile('grass_tall','#73965B',['#68894f'],8,(P,r)=>{for(let i=0;i<4;i++){const x=2+r()*12|0,y=4+r()*9|0;P(x,y,'#4f7344');P(x,y-1,'#4f7344');P(x,y-2,'#8fb070')}});
+tile('dirt_path','#b08d60',['#a07c52','#c0a070'],14);tile('dirt_dry','#c0a070',['#d0b480','#b08d60'],16);tile('dirt_dark','#8a6a45',['#78593a','#9a7a52'],14);tile('dirt_clearing','#b8956a',['#a8855a','#c8a578'],12);
+tile('soil_fertile','#7a5a3a',['#6a4c30','#8a6a45'],14);const furrow=(a,b)=>(P)=>{for(const y of[3,7,11,15])for(let x=0;x<16;x++){P(x,y,a);if(y>0)P(x,y-1,b)}};
+tile('soil_tilled','#7a5a3a',['#6a4c30'],6,furrow('#5a3f28','#8a6a45'));tile('soil_watered','#5f452c',['#4f3822'],6,furrow('#3f2c1b','#6f5236'));
+tile('soil_harvested','#7a5a3a',['#6a4c30'],6,(P,r)=>{furrow('#5a3f28','#8a6a45')(P);for(let i=0;i<5;i++)P(r()*16|0,(r()*4|0)*4+2,'#9bbd74')});
+tile('sand_dry','#e8d9a8',['#f3e9c4','#d8c898'],12);tile('sand_wet','#d2bf8a',['#c2ae7a','#e0cf9c'],12);tile('sand_texture','#e8d9a8',['#d8c898','#f3e9c4'],24);
+tile('sand_shells','#e8d9a8',['#d8c898'],8,(P,r)=>{const x=3+r()*9|0,y=3+r()*9|0;P(x,y,'#f4a9b8');P(x+1,y,'#fff');P(x,y+1,'#f4a9b8')});
+tile('w_deep','#3f7f9c',['#468aa8','#37728c'],10);tile('w_shallow','#6fb5c4',['#82c3d0','#60a5b6'],12);tile('w_lake','#6aaecb',['#7cbcd6','#5a9ebb'],12);tile('w_lake_deep','#4a90b4',['#5a9fc2','#3f82a4'],10);
+tile('w_river','#74b8cc',['#88c8da','#64a8bc'],12);tile('w_river_deep','#5aa0bc',['#6aaec8','#4a90ac'],10);
+tile('w_foam','#6fb5c4',['#82c3d0'],6,(P)=>{for(const x of[2,3,4,9,10,11])P(x,3,'#fff')});
+tile('w_fall','#8cc8dc',['#a8dcea','#74b4cc'],10,(P)=>{for(const x of[2,6,10,13])for(let y=0;y<16;y++)if((y+x)%5<3)P(x,y,'#fff')});
+tile('rock_ground','#9a9488',['#8a8478','#aaa498','#78726a'],18);tile('cliff_face','#7d7468',['#6a6258','#8d8478'],12,(P,r)=>{for(const x of[3,8,12])for(let y=0;y<16;y++)if((y+x)%7<4)P(x,y,'#5f574d')});
+tile('cliff_top','#a39d90',['#b3ad9f','#938d80'],14);
+/* ---------- world arrays ---------- */
+const T=[],V=[],WB=[],RG=[],OCC=[],RS=[];for(let y=0;y<MH;y++){T.push(Array(MW).fill('deep_water'));V.push(Array(MW).fill(null));WB.push(Array(MW).fill('ocean_001'));RG.push(Array(MW).fill('ocean'));OCC.push(Array(MW).fill(0));RS.push(Array(MW).fill(0))}
+const inb=(x,y)=>x>=0&&y>=0&&x<MW&&y<MH,isW=(x,y)=>TERRAIN_TYPES[T[y][x]].water,setT=(x,y,t,v,wb=null,rg)=>{if(!inb(x,y))return;T[y][x]=t;V[y][x]=v||null;WB[y][x]=wb;if(rg)RG[y][x]=rg};
+const ND=(x,y)=>{const a=Math.atan2((y-35)/25,(x-40)/31),r=1+.07*Math.sin(3*a+1)+.05*Math.sin(5*a+2.5)+.04*Math.cos(2*a);return Math.hypot((x-40)/31,(y-35)/25)/r},EL=(cx,cy,rx,ry,x,y)=>Math.hypot((x-cx)/rx,(y-cy)/ry);
+const each=f=>{for(let y=0;y<MH;y++)for(let x=0;x<MW;x++)f(x,y)};
+const dseg=(px,py,a,b)=>{const t=Math.max(0,Math.min(1,((px-a[0])*(b[0]-a[0])+(py-a[1])*(b[1]-a[1]))/((b[0]-a[0])**2+(b[1]-a[1])**2)));return Math.hypot(px-a[0]-t*(b[0]-a[0]),py-a[1]-t*(b[1]-a[1]))};
+const RIV=[[40,18],[42,21],[47,23],[53,24],[59,25],[65,27],[72,29]],rivY=x=>{for(let i=0;i<RIV.length-1;i++)if(x<=RIV[i+1][0])return RIV[i][1]+(RIV[i+1][1]-RIV[i][1])*Math.max(0,(x-RIV[i][0]))/(RIV[i+1][0]-RIV[i][0]);return 29};
+const PATH=new Set();
+(function gen(){
+each((x,y)=>{const n=ND(x,y);if(n<.9)setT(x,y,'grass',null,null,'island');else if(n<1)setT(x,y,'sand',null,null,'beach');else if(n<1.1)setT(x,y,'shallow_water','w_shallow','ocean_001','ocean');else setT(x,y,'deep_water','w_deep','ocean_001','ocean')});
+each((x,y)=>{if(x>=31&&x<=49&&y>=10&&y<=14&&(T[y][x]==='grass'||T[y][x]==='sand'))setT(x,y,'cliff','cliff_face',null,'cliff')});
+each((x,y)=>{const e=EL(40,16,3,2.2,x,y);if(y>=15&&e<1)setT(x,y,'shallow_water',e<.5?'w_river_deep':'w_river','pool_001','pool')});
+each((x,y)=>{if(T[y][x]==='grass'||T[y][x]==='sand'){let d=9;for(let i=0;i<RIV.length-1;i++)d=Math.min(d,dseg(x,y,RIV[i],RIV[i+1]));if(d<1.6)setT(x,y,d<.7?'deep_water':'shallow_water',d<.7?'w_river_deep':'w_river','river_001','river')}});
+each((x,y)=>{const e=EL(36,31,6,4.5,x,y);if(e<1)setT(x,y,e<.55?'deep_water':'shallow_water',e<.55?'w_lake_deep':'w_lake','lake_001','lake');else if(e<1.25&&T[y][x]==='grass')setT(x,y,'sand','sand_dry',null,'lake_shore')});
+each((x,y)=>{if(EL(19,25,5.5,4,x,y)<1&&(T[y][x]==='grass'||T[y][x]==='sand'))setT(x,y,'rock','rock_ground',null,'rocky')});
+each((x,y)=>{if(EL(33,41,4.5,3.2,x,y)<1&&T[y][x]==='grass')setT(x,y,'fertile_soil','soil_fertile',null,'farmland');else if(EL(39,45,2.5,1.8,x,y)<1&&T[y][x]==='grass')setT(x,y,'dirt','dirt_dry',null,'dry_patch');
+if(EL(24,41,2.8,1.9,x,y)<1)setT(x,y,'dirt','dirt_clearing',null,'campfire_core');else if(EL(24,41,8,5.5,x,y)<1&&T[y][x]==='grass')RG[y][x]='village';
+if(EL(52,44,8.5,6,x,y)<1&&T[y][x]==='grass')RG[y][x]='meadow'});
+const line=(p,f)=>{for(let i=0;i<p.length-1;i++){const[a,b]=[p[i],p[i+1]],n=Math.max(Math.abs(b[0]-a[0]),Math.abs(b[1]-a[1]));for(let k=0;k<=n;k++)f(Math.round(a[0]+(b[0]-a[0])*k/n),Math.round(a[1]+(b[1]-a[1])*k/n))}};
+[[[24,41],[19,38],[16,36]],[[24,41],[30,41]],[[28,39],[30,36]],[[24,37],[26,32],[29,28],[30,26]],[[26,32],[22,29],[19,27]],[[30,27],[34,26],[35,22],[36,18],[37,16]],[[30,44],[40,46],[46,45]],[[24,46],[24,52],[24,56]],[[18,42],[13,44]]].forEach(p=>line(p,(x,y)=>{[[0,0],[HH(x,y,5)<.35?1:0,HH(x,y,6)<.35?1:0]].forEach(([a,b])=>{const X=x+a,Y=y+b;if(inb(X,Y)&&['grass','sand','dirt'].includes(T[Y][X])&&RG[Y][X]!=='campfire_core'&&RG[Y][X]!=='lake_shore'||(inb(X,Y)&&RG[Y][X]==='lake_shore'&&a+b===0)){if(T[Y][X]!=='fertile_soil'&&T[Y][X]!=='rock'){setT(X,Y,'dirt','dirt_path',null,'path');PATH.add(X+','+Y)}}})}));
+/* forced control tiles for puzzle/fishing access */
+[[37,15],[37,16],[36,15],[36,16]].forEach(([x,y])=>setT(x,y,'grass',null,null,'island'));setT(37,14,'cliff','cliff_face',null,'cliff');
+[[22,43],[23,44],[24,44],[25,44],[26,43]].forEach(([x,y])=>setT(x,y,'grass',null,null,'village'));
+})();
+each((x,y)=>{if(!V[y][x]){const t=T[y][x],h=HH(x,y,3),r=RG[y][x];V[y][x]=t==='grass'?(r==='meadow'?(h<.2?'grass_flowers':h<.33?'grass_tall':h<.45?'grass_light':'grass_main'):r==='forest'?(h<.3?'grass_dark':h<.4?'grass_texture':'grass_main'):h<.5?'grass_main':h<.64?'grass_light':h<.74?'grass_texture':h<.84?'grass_dark':h<.92?'grass_flowers':'grass_stones'):t==='sand'?(h<.55?'sand_dry':h<.8?'sand_texture':h<.92?'sand_shells':'sand_wet'):'rock_ground'}});
+/* ---------- assets ---------- */
+const AS={};const A=(id,cat,sp,fp=[1,1])=>{AS[id]={id,cat,w:sp.w,h:sp.h,m:sp.m,fp}};
+const G=[['#9bbd74','#73965B','#5f8250'],['#8cc07a','#5f9a58','#4a7d48'],['#aebf6e','#8aa150','#6c823f'],['#6fa386','#558763','#3f6b4e'],['#b3c070','#94a455','#76863f'],['#648a52','#4f7344','#3c5a36']],TR=['#8a5a34','#6b4a30'],RK=['#b8b2a4','#9a9488','#78726a'],MO=['#8fbf6a','#6f9a4f','#4f7a3a'];
+const tree=(w,h,bl,cs,tw,mark)=>Sp(w,h,(P,B,R)=>{const tx=(w-tw)>>1,th=(h*.45)|0;R(tx,h-1-th,tw,th,TR[0]);R(tx+tw-1,h-1-th,1,th,TR[1]);if(mark)R(tx,h-7,tw,1,'#d8b47a');bl.forEach(b=>B(b[0],b[1],b[2],b[3],cs))});
+const TV=[[32,40,[[16,14,12,11],[9,19,8,7],[23,19,8,7]],0,4],[40,48,[[20,17,16,14],[11,25,9,8],[29,25,9,8]],1,6],[24,32,[[12,11,8,8]],2,3],[32,48,[[16,12,9,10],[16,25,11,10]],3,4],[36,44,[[18,16,14,12],[10,23,8,7],[26,23,8,7]],4,5],[40,40,[[12,17,10,9],[27,17,11,10],[20,12,10,9]],5,5]];
+TV.forEach((t,i)=>A('tree_'+(i+1),'Trees',tree(t[0],t[1],t[2],G[t[3]],t[4])));
+A('tree_harvestable','Trees',tree(32,40,TV[0][2],G[0],4,1));A('tree_stump','Trees',Sp(16,14,(P,B,R)=>{R(3,5,10,8,TR[0]);R(3,5,10,3,'#c8a070');R(5,6,6,1,'#a07a50');R(11,8,2,5,TR[1])}));
+A('tree_sapling','Trees',Sp(12,16,(P,B,R)=>{R(5,6,2,9,TR[0]);B(3,6,3,2,G[0]);B(9,5,3,2,G[1])}));A('tree_regrowing','Trees',tree(20,28,[[10,9,7,7]],G[0],2));
+const palm=(h,lean,co)=>Sp(32,h,(P,B,R,L)=>{let tx=15;const n=h-12;for(let i=0;i<n;i++){tx=15+Math.round(lean*(i/n)**2);R(tx,h-2-i,2,1,i%3?'#a58052':'#8a6840')}const ty=h-2-n;[[-12,4],[-9,-2],[-4,-5],[4,-5],[9,-2],[12,4]].forEach(([dx,dy],i)=>{L(tx+1,ty,tx+1+dx,ty+dy,i%2?'#5f9a58':'#73965B',2);L(tx+1+dx,ty+dy,tx+1+dx+(dx>0?2:-2),ty+dy+3,'#4a7d48',1)});if(co){R(tx-1,ty+2,2,2,'#6b4a30');R(tx+2,ty+2,2,2,'#6b4a30')}});
+A('palm_1','Trees',palm(40,3,1));A('palm_2','Trees',palm(44,-4,1));A('palm_3','Trees',palm(36,2,0));
+const bush=(w,h,bl,cs,fn)=>Sp(w,h,(P,B,R,L)=>{bl.forEach(b=>B(b[0],b[1],b[2],b[3],cs));fn&&fn(P,R)});
+A('bush_1','Bushes',bush(16,16,[[8,9,6,5]],G[0]));A('bush_2','Bushes',bush(24,20,[[8,11,6,6],[16,11,7,6]],G[1]));A('bush_3','Bushes',bush(20,16,[[10,9,8,5]],G[2],P=>{[[5,8],[10,6],[14,9]].forEach(([x,y])=>P(x,y,'#f4a9b8'))}));
+const BP=[[5,8],[9,6],[13,9],[7,12],[12,12],[4,12],[15,6]],berry=(n,small,col='#c8503c')=>bush(20,18,small?[[10,12,5,4]]:[[10,10,8,6]],G[0],(P,R)=>{BP.slice(0,n).forEach(([x,y])=>{R(x,y-(small?2:0),2,2,col);P(x,y-(small?2:0),'#e8806a')})});
+A('berry_bush_full','Bushes',berry(7));A('berry_bush_partial','Bushes',berry(3));A('berry_bush_empty','Bushes',berry(0));A('berry_bush_regrowing','Bushes',berry(2,1,'#9bbd74'));
+const FC=['#f2d95a','#e8708a','#f4f0e0','#8aa8e8','#e8904a','#b88ad8'];FC.forEach((c,i)=>A('flower_'+(i+1),'Flowers',Sp(8,12,(P,B,R)=>{R(3,5,1,6,'#4a7d48');R(4,8,2,1,'#5f9a58');R(2,2,3,3,c);P(3,3,'#f2d95a');P(3,1,c);P(3,5,c)},0)));
+A('rare_flower','Flowers',Sp(10,14,(P,B,R)=>{R(4,6,1,7,'#4a7d48');R(2,2,5,4,'#6fe0d0');R(3,1,3,1,'#b8f4ea');P(4,3,'#fff4b0');R(5,9,3,1,'#5f9a58')},0));
+[['#c8503c','#e8e0c8'],['#c8a070','#e8e0c8'],['#a888c8','#e8e0c8']].forEach((c,i)=>A('mushroom_'+(i+1),'Flowers',Sp(10,10,(P,B,R)=>{R(4,5,2,4,c[1]);B(5,4,4,3,[c[0],c[0],sh(c[0])]);P(3,3,'#fff');P(6,4,'#fff')},0)));
+function sh(c){const n=parseInt(c.slice(1),16);return'#'+[n>>16,n>>8&255,n&255].map(v=>Math.round(v*.78).toString(16).padStart(2,'0')).join('')}
+[['#5f9a58','#9bbd74'],['#6fa386','#b3c070'],['#8aa150','#c8503c']].forEach((c,i)=>A('herb_'+(i+1),'Flowers',Sp(10,12,(P,B,R,L)=>{R(4,6,1,6,c[0]);L(4,8,1,3,c[1]);L(5,7,8,3,c[1]);L(4,10,2,7,c[0]);i===2&&R(4,2,2,2,'#c8503c')},0)));
+A('reeds','Flowers',Sp(12,18,(P,B,R)=>{[2,5,8].forEach((x,i)=>{R(x,4+i,1,13-i,'#6f9a4f');R(x,2+i*2,1,3,'#8a6840')})},0));A('water_lily','Flowers',Sp(12,8,(P,B,R)=>{B(6,4,5,2,['#8fbf6a','#6f9a4f','#4f7a3a']);P(6,3,'#f4a9b8');P(7,3,'#fff')},0));
+[0,1,2].forEach(i=>A('tall_grass_'+(i+1),'Flowers',Sp(12,12,(P,B,R,L)=>{[[2,0],[5,1],[8,0],[10,2]].slice(0,3+i).forEach(([x,o],k)=>L(x,11,x+(k%2?1:-1),o+2,k%2?'#80a064':'#4f7344',1))},0)));
+const stone=(w,h,s)=>Sp(w,h,(P,B)=>B(w/2,h/2+1,w/2-1.5,h/2-2,RK),s);
+A('stone_small','Rocks',stone(10,8,1));A('stone_large','Rocks',stone(20,16,1),[1,1]);A('rock_deposit','Rocks',Sp(18,16,(P,B,R)=>{B(9,9,7,6,RK);R(5,6,3,2,'#c8a070');R(10,5,3,2,'#c8a070');P(7,9,'#fff4b0')}));
+A('branch','Resources',Sp(14,8,(P,B,R,L)=>{L(1,6,12,2,TR[0],2);L(6,4,8,1,TR[1])},0));A('log','Resources',Sp(16,10,(P,B,R)=>{R(1,2,14,6,TR[0]);R(1,6,14,2,TR[1]);B(3,5,2,3,['#d8b47a','#c8a070','#a07a50'])}));
+A('coconut','Resources',Sp(8,8,(P,B)=>B(4,4,3,3,['#8a6840','#6b4a30','#4a3220'])));A('wild_seeds','Resources',Sp(10,8,P=>{[[1,3],[4,5],[6,2],[8,5],[3,1]].forEach(([x,y])=>{P(x,y,'#d8b47a');P(x+1,y,'#a07a50')})},0));
+A('clay_deposit','Resources',Sp(16,12,(P,B)=>B(8,7,7,4,['#d8985a','#c0824a','#a06a3a'])));
+[['#f4a9b8','#fff'],['#e8e0c8','#d8c898'],['#e8c8a0','#c8a070']].forEach((c,i)=>A('shell_'+(i+1),'Collectibles',Sp(8,8,(P,B,R)=>{B(4,4,3,3,[c[1],c[0],c[0]]);P(4,3,c[1]);P(3,4,c[1])},0)));
+A('starfish','Collectibles',Sp(10,10,(P,B,R,L)=>{[[5,1],[9,4],[8,9],[2,9],[1,4]].forEach(([x,y])=>L(5,5,x,y,'#e8904a',1));P(5,5,'#f8c070')},0));A('pottery','Collectibles',Sp(10,10,(P,B,R)=>{R(2,3,6,5,'#c8703c');R(2,3,6,1,'#e8904a');R(4,5,2,1,'#8a4a2a');P(7,7,'#a05a30')}));
+A('stone_tablet','Collectibles',Sp(12,14,(P,B,R)=>{R(2,2,8,10,RK[1]);R(2,2,8,2,RK[0]);R(4,5,4,1,RK[2]);R(4,7,3,1,RK[2]);R(4,9,4,1,RK[2])}));
+['#6fe0d0','#e888d8','#f4d85a'].forEach((c,i)=>A('crystal_'+(i+1),'Collectibles',Sp(10,12,(P,B,R,L)=>{R(4,2,3,8,c);R(3,4,1,5,c);R(7,5,1,4,c);P(4,2,'#fff');P(4,4,'#fff')})));
+A('ancient_fragment','Collectibles',Sp(12,12,(P,B,R)=>{R(2,3,8,6,RK[1]);R(3,2,5,1,RK[0]);R(4,5,4,1,'#6fe0d0');R(6,7,2,1,'#6fe0d0');P(9,8,RK[2])}));
+A('driftwood','Collectibles',Sp(20,8,(P,B,R,L)=>{L(1,5,18,2,'#c8b090',2);L(8,4,12,6,'#a89070',1)},0));A('crate','Collectibles',Sp(14,14,(P,B,R)=>{R(1,1,12,12,'#a87848');R(1,1,12,2,'#c8985a');R(1,6,12,1,'#6b4a30');R(1,11,12,1,'#6b4a30');R(1,1,2,12,'#6b4a30');R(11,1,2,12,'#6b4a30')}));
+const CROP={carrot:'#e0802a',corn:'#e8c25a',potato:'#b8935a',cabbage:'#9bc47a',tomato:'#d04a3a'};
+Object.keys(CROP).forEach(k=>[0,1,2,3].forEach(s=>A(`crop_${k}_${s}`,'Crops',Sp(16,16,(P,B,R,L)=>{const c=CROP[k];if(s===0){[[3,10],[8,12],[12,9],[6,5]].forEach(([x,y])=>R(x,y,1,1,'#d8b47a'));return}
+if(s===1){[[4,10],[9,11],[12,8]].forEach(([x,y])=>{P(x,y,'#9bbd74');P(x,y+1,'#6f9a4f');P(x+1,y,'#9bbd74')});return}
+if(k==='carrot'){[4,8,12].forEach(x=>{L(x,12,x-1,s===2?7:5,'#6f9a4f');L(x,12,x+1,s===2?7:5,'#80a064');s===3&&R(x-1,12,2,3,c)})}
+if(k==='corn'){[5,11].forEach(x=>{R(x,s===2?6:2,1,10,'#6f9a4f');L(x,9,x-3,6,'#80a064');L(x,10,x+3,7,'#80a064');s===3&&R(x+1,6,2,4,c)})}
+if(k==='potato'){B(8,10,6,4,G[1]);s===3&&[[4,13],[8,14],[11,13]].forEach(([x,y])=>R(x,y,2,2,c))}
+if(k==='cabbage'){B(8,10,6,5,s===2?G[1]:['#c8e0a8','#9bc47a','#6f9a4f']);s===3&&B(8,9,3,3,['#e0f0c8','#c8e0a8','#9bc47a'])}
+if(k==='tomato'){L(4,14,5,3,'#6f9a4f');L(11,14,10,3,'#6f9a4f');B(8,9,6,5,G[1]);s===3&&[[4,8],[11,7],[7,11],[10,12],[5,12]].forEach(([x,y])=>R(x,y,2,2,c))}},0))));
+/* landmarks */
+const cave=lit=>Sp(64,48,(P,B,R,L)=>{B(32,26,28,20,RK);B(13,30,12,12,RK);B(51,30,12,12,RK);B(32,36,10,10,lit?['#3a2a22','#3a2a22','#3a2a22']:['#1f1a17','#1f1a17','#1f1a17']);R(22,36,20,10,lit?'#3a2a22':'#1f1a17');lit&&B(32,42,5,3,['#f8e090','#e8b050','#c88030']);[[10,22],[40,14],[52,24],[24,12]].forEach(([x,y])=>B(x,y,5,3,MO));[22,26,38,42].forEach((x,i)=>L(x,16+i%2*2,x+(i%2?1:-1),30+i*3,'#5f9a58',1));P(14,38,'#c8503c');P(15,38,'#c8503c');P(50,40,'#e8e0c8');P(51,40,'#e8e0c8')});
+A('cave_locked','Landmarks',cave(0),[4,2]);A('cave_unlocked','Landmarks',cave(1),[4,2]);
+const wfall=(f,open)=>Sp(48,64,(P,B,R,L)=>{R(1,1,14,62,RK[1]);R(33,1,14,62,RK[1]);R(1,1,46,12,RK[1]);R(1,1,14,4,RK[0]);R(33,1,14,4,RK[0]);R(15,9,18,52,'#8cc8dc');for(let i=0;i<5;i++)for(let y=9;y<56;y++)if((y+i*5+f*3)%11<5)P(17+i*3,y,'#e8f6fa');B(24,59,16,3,['#fff','#e6f4f8','#cfe8f0']);[[6,14],[40,20],[8,40],[41,46]].forEach(([x,y])=>B(x,y,4,3,MO));R(2,50,12,1,'#78726a');open?R(3,40,9,12,'#1f1a17'):(R(3,40,9,12,'#8a8478'),R(3,45,9,1,'#5f574d'),R(7,40,1,12,'#5f574d'));P(20,3,'#5f9a58');P(30,4,'#5f9a58')});
+A('waterfall_locked','Landmarks',wfall(0,0),[3,4]);A('waterfall_unlocked','Landmarks',wfall(0,1),[3,4]);
+const brg=(n,s)=>Sp(32,n*16,(P,B,R)=>{const N=n*4;for(let i=0;i<N;i++){const on=s===2||(s===1?i<N*.62:(i<3||i>=N-3));if(!on)continue;const y=i*4;R(4,y,24,3,i%2?'#a87848':'#b98858');R(4,y+3,24,1,TR[1])}if(s>=1){for(let k=0;k<N/4;k++){const y=k*16+2;if(s===2||k<n*.62){R(2,y,2,8,TR[0]);R(28,y,2,8,TR[0])}}R(2,0,1,s===2?n*16-2:n*10,'#d8c0a0');R(29,0,1,s===2?n*16-2:n*10,'#d8c0a0')}if(s===0){R(8,24,6,2,TR[1]);R(18,n*16-30,5,2,TR[1])}});
+const mon=(s,g)=>Sp(64,96,(P,B,R,L)=>{const done=s===5,SC=done?['#d8d4c4','#b8b4a4','#98948a']:['#b8b2a4','#98928a','#78726a'];R(2,78,60,14,SC[1]);R(2,78,60,3,SC[0]);R(6,72,52,6,SC[0]);R(12,30,40,44,SC[2]);R(4,26,56,8,SC[0]);R(4,32,56,2,SC[1]);R(6,34,10,42,SC[1]);R(6,34,3,42,SC[0]);R(48,34,10,42,SC[1]);R(48,34,3,42,SC[0]);
+[40,46,52,58].forEach(y=>{R(18,y,28,1,SC[1]);R(22,y+2,6,1,done?'#6fe0d0':SC[2]);R(34,y+2,8,1,done?'#6fe0d0':SC[2])});
+const act=done?'#fff4b0':s>0?'#6fe0d0':'#6b6b72';for(let i=0;i<7;i++)R(32-i,50-6+i,i*2+1,1,act),R(32-i,50+6-i,i*2+1,1,act);P(31,47,'#fff');
+[[14,60],[46,60],[14,70],[46,70]].forEach(([x,y],i)=>{R(x,y,4,4,i<s||done?'#6fe0d0':'#3a352f');R(x,y,4,1,i<s||done?'#b8f4ea':'#4a443c')});
+if(!done){B(10,30,5,3,MO);B(54,36,5,4,MO);B(30,28,6,2,MO);L(52,34,52,56,'#5f9a58');L(14,34,15,50,'#5f9a58');R(0,86,8,4,RK[1]);R(54,88,8,3,RK[1])}else{for(let x=3;x<62;x+=4){R(x,89,2,2,['#f4a9b8','#f2d95a','#fff','#8aa8e8'][x%4]);P(x+1,91,'#5f9a58')}B(10,30,3,2,['#d8d4c4','#d8d4c4','#b8b4a4']);for(let i=0;i<6;i++){const a=i*1.05+g;P(32+Math.cos(a)*14,50+Math.sin(a)*14,'#fff4b0')}}});
+['inactive','fragments_1','fragments_2','fragments_3','fragments_4','restored'].forEach((k,i)=>A('monument_'+k,'Landmarks',mon(i,0),[4,2]));
+const ruin=()=>Sp(32,32,(P,B,R)=>{R(2,18,10,12,RK[1]);R(2,18,10,2,RK[0]);R(14,10,5,20,RK[1]);R(14,10,5,2,RK[0]);R(21,22,9,8,RK[1]);R(21,22,9,2,RK[0]);B(7,19,4,2,MO);P(16,16,'#6fe0d0');R(24,26,3,1,RK[2])});A('ruins','Landmarks',ruin(),[2,2]);
+const gard=s=>Sp(64,48,(P,B,R)=>{R(2,6,60,40,'#6a4c30');R(2,6,60,3,RK[0]);R(2,43,60,3,RK[1]);R(2,6,3,40,RK[1]);R(59,6,3,40,RK[1]);const r=sr(9);for(let i=0;i<(s===0?10:s===1?14:40);i++){const x=7+r()*48|0,y=12+r()*26|0;if(s===0){R(x,y,1,4,'#8a7a50');P(x+1,y,'#a89868')}else{const f=i<(s===1?5:40);R(x,y+2,1,3,'#4a7d48');f?(R(x-1,y,3,2,FC[i%6]),P(x,y,'#f2d95a')):(R(x,y,1,4,'#8a7a50'))}}});
+['abandoned','partial','restored'].forEach((k,i)=>A('garden_'+k,'Landmarks',gard(i),[4,3]));
+A('campfire_site','Landmarks',Sp(16,16,(P,B,R)=>{[[3,9],[7,10],[11,9],[2,5],[12,5],[5,3],[9,3]].forEach(([x,y])=>R(x,y,3,2,RK[1]));R(6,6,4,3,'#4a3220')}));A('spring_blocked','Landmarks',Sp(16,16,(P,B,R)=>{R(3,7,10,6,'#4a90b4');R(2,4,6,4,RK[1]);R(8,3,6,5,RK[2]);R(5,10,6,4,RK[1]);P(4,9,'#8cc8dc')}));
+/* ---------- animations (discrete frames) ---------- */
+const shift=(sp,dx)=>{const m=new Map();sp.m.forEach((c,k)=>{const x=k%sp.w,y=(k/sp.w)|0,X=y<sp.h*.55?x+dx:x;if(X>=0&&X<sp.w)m.set(y*sp.w+X,c)});return{w:sp.w,h:sp.h,m}};
+const ANIMS={water_ripple:{fps:4,n:4,mk:i=>Sp(16,16,P=>{const r=i+1,c=i<3?'#e8f6fa':'#a9d6e2';for(let a=-r;a<=r;a++){P(8+a,8-((r+1)>>1),c);P(8+a,8+((r+1)>>1),c)}},0)},
+shore_waves:{fps:4,n:4,mk:i=>Sp(16,8,P=>{for(let x=0;x<16;x++){if((x+i*2)%6<3)P(x,2+(i%2),'#fff');if((x+i*2+3)%7<2)P(x,5,'#cfe8f0')}},0)},
+waterfall_flow:{fps:5,n:4,mk:i=>wfall(i,0)},waterfall_foam:{fps:4,n:3,mk:i=>Sp(48,8,(P,B)=>B(24,4,14+i,3,['#fff','#e6f4f8','#cfe8f0']),0)},
+flower_sway:{fps:3,n:2,mk:i=>shift(AS.flower_2,i)},tall_grass_sway:{fps:3,n:2,mk:i=>shift(AS.tall_grass_2,i)},leaf_rustle:{fps:3,n:3,mk:i=>shift(AS.tree_1,[0,1,-1][i])},bush_rustle:{fps:5,n:3,mk:i=>shift(AS.berry_bush_full,[0,1,-1][i])},
+crop_growth:{fps:2,n:4,mk:i=>AS['crop_tomato_'+i]},monument_glow:{fps:4,n:4,mk:i=>mon(5,i*1.6)}};
+Object.entries(ANIMS).forEach(([k,a])=>{a.frames=[];for(let i=0;i<a.n;i++){const s=a.mk(i);a.w=s.w;a.h=s.h;A(`anim_${k}_${i}`,'Animations',s);a.frames.push(`anim_${k}_${i}`)}});
+/* ---------- objects ---------- */
+const OBJS=[],CNT={},nid=t=>t+'_'+String(CNT[t]=(CNT[t]||0)+1).padStart(3,'0');
+const fpt=o=>{const r=[];for(let j=0;j<o.footprint.height;j++)for(let i=0;i<o.footprint.width;i++)r.push([o.tile.x+i,o.tile.y-j]);return r};
+function addO(type,asset,x,y,o={}){const a=AS[asset],fw=o.fw||1,fh=o.fh||1,bl=o.block!==undefined?o.block:true,ob={id:o.id||nid(type),type,assetId:asset,layer:o.layer||'resource-objects',cls:o.cls||'res',tile:{x,y},footprint:{width:fw,height:fh},blocksMovement:bl,blocksBuilding:o.bb!==undefined?o.bb:bl,sprite:{width:a.w,height:a.h},anchor:{x:x*16+fw*8,y:y*16+16},sortY:y*16+16,interactionPoints:[],state:o.state||null,states:o.states||null,resource:o.resource||null,canopy:!!o.canopy,decorative:!!o.deco};
+Object.assign(ob,o.extra||{});OBJS.push(ob);if(bl)fpt(ob).forEach(([tx,ty])=>inb(tx,ty)&&(OCC[ty][tx]=1));return ob}
+const resE=(cx,cy,rx,ry)=>each((x,y)=>{if(EL(cx,cy,rx,ry,x,y)<1)RS[y][x]=1}),resR=(a,b,c,d)=>{for(let y=b;y<=d;y++)for(let x=a;x<=c;x++)if(inb(x,y))RS[y][x]=1};
+PATH.forEach(k=>{const[x,y]=k.split(',').map(Number);RS[y][x]=1});resE(24,41,10,7);resE(17,37,5,4);resE(33,41,6,4.5);resE(36,31,8,6.5);resR(26,18,36,27);resR(46,14,56,22);resR(13,20,25,29);resR(35,10,44,19);resR(54,20,61,30);resR(48,38,56,46);resR(55,14,61,20);resR(26,30,29,34);
+const freeT=(x,y)=>inb(x,y)&&!isW(x,y)&&['grass','sand','dirt','rock'].includes(T[y][x])&&!OCC[y][x]&&!RS[y][x];
+/* landmarks */
+const mstates={inactive:'monument_inactive',fragments_1:'monument_fragments_1',fragments_2:'monument_fragments_2',fragments_3:'monument_fragments_3',fragments_4:'monument_fragments_4',restored:'monument_restored'};
+addO('monument','monument_inactive',50,19,{id:'ancient_monument_001',layer:'landmarks',fw:4,fh:2,state:'inactive',states:mstates,extra:{fragmentSlots:4,puzzleId:'restore_monument'}});
+addO('cave_entrance','cave_locked',17,24,{id:'cave_entrance_001',layer:'landmarks',fw:4,fh:2,state:'locked',states:{locked:'cave_locked',unlocked:'cave_unlocked'},extra:{puzzleId:'light_cave'}});
+addO('waterfall','waterfall_locked',39,14,{id:'waterfall_001',layer:'landmarks',fw:3,fh:4,state:'locked',states:{locked:'waterfall_locked',unlocked:'waterfall_unlocked'},extra:{inspectionPosition:{x:37,y:16,facing:'right'},blockedEntrance:{x:37,y:14},puzzleInteraction:{x:37,y:15,facing:'up'},puzzleId:'open_waterfall_passage'}});
+addO('ruins','ruins',57,18,{id:'stone_ruins_001',layer:'landmarks',fw:2,fh:2});
+addO('campfire_site','campfire_site',24,41,{id:'campfire_site_001',layer:'landmarks',state:'unlit',extra:{puzzleId:'light_campfire'}});
+addO('spring','spring_blocked',27,31,{id:'spring_blocked_001',layer:'landmarks',state:'blocked',extra:{puzzleId:'unblock_spring'}});
+let BR={};(function(){let a=99,b=0;for(const x of[57,58])for(let y=0;y<MH;y++)if(WB[y][x]==='river_001'){a=Math.min(a,y);b=Math.max(b,y)}BR={x:57,y0:a-1,y1:b+1,n:b-a+3}})();
+A('bridge_broken','Landmarks',brg(BR.n,0),[2,BR.n]);A('bridge_partial','Landmarks',brg(BR.n,1),[2,BR.n]);A('bridge_repaired','Landmarks',brg(BR.n,2),[2,BR.n]);
+addO('bridge','bridge_broken',BR.x,BR.y1,{id:'broken_bridge_001',layer:'landmarks',fw:2,fh:BR.n,block:false,bb:true,state:'broken',states:{broken:'bridge_broken',partial:'bridge_partial',repaired:'bridge_repaired'},extra:{puzzleId:'repair_bridge'}});
+addO('garden','garden_abandoned',50,42,{id:'flower_garden_001',layer:'landmarks',fw:4,fh:3,block:false,bb:true,state:'abandoned',states:{abandoned:'garden_abandoned',partial:'garden_partial',restored:'garden_restored'},extra:{puzzleId:'restore_garden'}});
+/* resources */
+[[14,34],[17,34],[20,35],[13,37],[16,38],[19,38],[15,41]].forEach(([x,y])=>{if(T[y][x]==='grass')addO('berry_bush','berry_bush_full',x,y,{state:'full',states:{full:'berry_bush_full',partial:'berry_bush_partial',empty:'berry_bush_empty',regrowing:'berry_bush_regrowing'},resource:{type:'food',initialAmount:30,maxAmount:30,renewable:true}})});
+[[30,47],[32,48],[19,46],[36,48]].forEach(([x,y])=>freeT(x,y)&&addO('harvestable_rock','rock_deposit',x,y,{resource:{type:'stone',initialAmount:40,maxAmount:40,renewable:false}}));
+[[30,35],[41,35]].forEach(([x,y])=>inb(x,y)&&!isW(x,y)&&addO('clay_deposit','clay_deposit',x,y,{block:false,bb:false,resource:{type:'clay',initialAmount:20,maxAmount:20,renewable:false}}));
+const TSt={healthy:null,harvestable:'tree_harvestable',stump:'tree_stump',sapling:'tree_sapling',regrowing:'tree_regrowing'};
+const forestZ=(x,y)=>(T[y][x]==='grass'||RG[y][x]==='forest'&&T[y][x]==='grass')&&!RS[y][x]&&((x<36&&y<34&&y>12)||EL(14,40,4.5,11,x,y)<1||(y>=51&&ND(x,y)<.86)||(x>=61&&y>30&&y<52)||(x>=44&&y<rivY(x)-2&&y>=16&&x>=62));
+const near=(x,y,d)=>{for(let j=-d;j<=d;j++)for(let i=-d;i<=d;i++)if(inb(x+i,y+j)&&OCC[y+j][x+i])return 1;return 0};
+each((x,y)=>{if(forestZ(x,y))RG[y][x]='forest'});
+each((x,y)=>{if(forestZ(x,y)&&EL(20,17,3,2.5,x,y)>1&&EL(9,40,2,2.5,x,y)>1&&HH(x,y,11)<.2&&freeT(x,y)&&!near(x,y,1)){const k=1+Math.floor(HH(x,y,12)*6),o=addO('tree','tree_'+k,x,y,{canopy:true,state:'healthy',states:Object.assign({},TSt,{healthy:'tree_'+k}),resource:{type:'wood',initialAmount:20,maxAmount:20,renewable:true}})}});
+each((x,y)=>{if(T[y][x]==='sand'&&!RS[y][x]&&ND(x,y)>.93&&ND(x,y)<.99&&HH(x,y,13)<.06&&!near(x,y,3)&&RG[y][x]==='beach'){const k=1+Math.floor(HH(x,y,14)*3);addO('palm_tree','palm_'+k,x,y,{canopy:true,state:'healthy',resource:{type:'coconut',initialAmount:6,maxAmount:6,renewable:true}})}});
+each((x,y)=>{if(forestZ(x,y)&&HH(x,y,15)<.03&&freeT(x,y)&&!near(x,y,1))addO('bush','bush_'+(1+Math.floor(HH(x,y,16)*3)),x,y,{})});
+each((x,y)=>{if(RG[y][x]==='rocky'&&HH(x,y,17)<.1&&freeT(x,y)&&!near(x,y,1))addO('large_rock','stone_large',x,y,{})});
+each((x,y)=>{if(forestZ(x,y)&&HH(x,y,18)<.025&&freeT(x,y)&&!OCC[y][x])addO('harvestable_rock','rock_deposit',x,y,{resource:{type:'stone',initialAmount:40,maxAmount:40,renewable:false}})});
+/* decorations (non-blocking) */
+const dec=(type,asset,x,y,res)=>addO(type,asset,x,y,{layer:'ground-decoration',block:false,bb:false,deco:!res,resource:res||null,cls:'dec'});
+each((x,y)=>{if(!inb(x,y)||isW(x,y)||OCC[y][x]||PATH.has(x+','+y))return;const t=T[y][x],r=RG[y][x],h=HH(x,y,21),g=r==='grass'||r==='meadow'||r==='village'||r==='island'||r==='forest';
+if(t==='grass'&&!RS[y][x]||t==='grass'&&r==='meadow'){if(r==='meadow'&&h<.12)dec('flower','flower_'+(1+Math.floor(HH(x,y,22)*6)),x,y);else if(r==='meadow'&&h<.2)dec('tall_grass','tall_grass_'+(1+Math.floor(HH(x,y,23)*3)),x,y);else if(r==='forest'&&h<.05)dec('mushroom','mushroom_'+(1+Math.floor(HH(x,y,24)*3)),x,y,{type:'mushroom',initialAmount:3,maxAmount:3,renewable:true});else if(r==='forest'&&h<.08)dec('herb','herb_'+(1+Math.floor(HH(x,y,25)*3)),x,y,{type:'herb',initialAmount:2,maxAmount:2,renewable:true});else if(r==='forest'&&h<.1)dec('branch','branch',x,y);else if(g&&h<.025)dec('flower','flower_'+(1+Math.floor(HH(x,y,26)*6)),x,y);else if(g&&h<.04)dec('tall_grass','tall_grass_'+(1+Math.floor(HH(x,y,27)*3)),x,y);else if(g&&h<.05)dec('small_stone','stone_small',x,y);else if(r==='meadow'&&h<.23)dec('wild_seeds','wild_seeds',x,y,{type:'seeds',initialAmount:5,maxAmount:5,renewable:true})}
+if(t==='sand'&&r==='beach'&&!RS[y][x]){if(h<.03)dec('seashell','shell_'+(1+Math.floor(HH(x,y,28)*3)),x,y);else if(h<.045)dec('starfish','starfish',x,y);else if(h<.06)dec('driftwood','driftwood',x,y);else if(h<.075)dec('small_stone','stone_small',x,y);else if(h<.085)dec('coconut','coconut',x,y,{type:'coconut',initialAmount:1,maxAmount:1,renewable:false})}
+if(t==='sand'&&r==='lake_shore'&&h<.12)dec('small_stone','stone_small',x,y)});
+each((x,y)=>{if(!isW(x,y)||!['lake_001','river_001'].includes(WB[y][x])||T[y][x]!=='shallow_water')return;const n=[[1,0],[-1,0],[0,1],[0,-1]].some(([a,b])=>inb(x+a,y+b)&&!isW(x+a,y+b)&&T[y+b][x+a]!=='cliff');if(n&&HH(x,y,29)<.2)dec('reeds','reeds',x,y);else if(WB[y][x]==='lake_001'&&HH(x,y,30)<.05)dec('water_lily','water_lily',x,y)});
+/* ---------- collision, interaction points, zones ---------- */
+const COL=[];each((x,y)=>{(COL[y]=COL[y]||[])[x]=(!TERRAIN_TYPES[T[y][x]].walkable||OCC[y][x])?1:0});
+const SPAWN=[[22,43],[23,44],[24,44],[25,44],[26,43]];SPAWN.forEach(([x,y])=>COL[y][x]=0);
+const brFp=()=>fpt(OBJS.find(o=>o.type==='bridge'));
+function colFor(st={}){const c=COL.map(r=>r.slice());if(st.bridge===2)brFp().forEach(([x,y])=>c[y][x]=0);if(st.cave)c[23][18]=0;if(st.wf)c[14][37]=0;return c}
+function bfs(starts,col){const seen=new Uint8Array(MW*MH),q=[];starts.forEach(([x,y])=>{if(!col[y][x]){seen[y*MW+x]=1;q.push(x,y)}});for(let i=0;i<q.length;i+=2){const x=q[i],y=q[i+1];[[1,0],[-1,0],[0,1],[0,-1]].forEach(([a,b])=>{const X=x+a,Y=y+b;if(inb(X,Y)&&!col[Y][X]&&!seen[Y*MW+X]){seen[Y*MW+X]=1;q.push(X,Y)}})}return seen}
+function getInteractionPoints(o){if(!o.blocksMovement)return[{x:o.tile.x,y:o.tile.y,facing:'down'}];const F=new Set(fpt(o).map(([x,y])=>x+','+y)),c=[];fpt(o).forEach(([x,y])=>[[0,1,'up'],[-1,0,'right'],[1,0,'left'],[0,-1,'down']].forEach(([a,b,f])=>{const X=x+a,Y=y+b;if(inb(X,Y)&&!F.has(X+','+Y)&&!COL[Y][X]&&!c.some(q=>q.x===X&&q.y===Y))c.push({x:X,y:Y,facing:f,o:b===1?0:1})}));c.sort((p,q)=>p.o-q.o);return c.slice(0,o.type==='monument'?4:2).map(({x,y,facing})=>({x,y,facing}))}
+OBJS.forEach(o=>{o.interactionPoints=getInteractionPoints(o)});
+OBJS.find(o=>o.type==='bridge').interactionPoints=[{x:BR.x,y:BR.y1+1,facing:'up'}];OBJS.find(o=>o.type==='cave_entrance').interactionPoints=[{x:19,y:25,facing:'up'}];
+const fixO=(id,pts)=>{OBJS.find(o=>o.id===id).interactionPoints=pts};fixO('waterfall_001',[{x:37,y:15,facing:'up'}]);fixO('flower_garden_001',[{x:49,y:42,facing:'right'},{x:54,y:42,facing:'left'}]);
+const sortO=()=>OBJS.sort((a,b)=>a.sortY-b.sortY||a.tile.x-b.tile.x);sortO();
+const pre=bfs(SPAWN,colFor()),post=bfs(SPAWN,colFor({bridge:2}));
+const tilesWhere=f=>{const r=[];each((x,y)=>{if(f(x,y))r.push([x,y])});return r},ok=(x,y)=>!COL[y][x]&&RG[y][x]!=='ocean'&&post[y*MW+x];
+const nearWater=(x,y,wb,d)=>{for(let j=-d;j<=d;j++)for(let i=-d;i<=d;i++)if(inb(x+i,y+j)&&WB[y+j][x+i]===wb&&isW(x+i,y+j))return 1;return 0};
+const inNE=(x,y)=>x>=43&&y<rivY(x)-1.8&&y>=15&&T[y][x]!=='cliff'&&!isW(x,y);
+const WATER_BODIES=[{id:'ocean_001',type:'ocean',fishable:true},{id:'lake_001',type:'lake',fishable:true,center:{x:36,y:31}},{id:'river_001',type:'river',fishable:true,flow:'from waterfall pool (40,18) east to ocean (72,29)'},{id:'pool_001',type:'pool',fishable:false,note:'waterfall pool'}];
+const FISH=(()=>{const dirs=[[1,0,'right'],[-1,0,'left'],[0,1,'down'],[0,-1,'up']],out=[];
+[['lake_001',6,[36,31],'lake'],['river_001',4,[55,24],'river'],['ocean_001',4,[40,35],'ocean']].forEach(([wb,n,c,nm])=>{const cand=[],seenS=new Set();each((x,y)=>{if(WB[y][x]!==wb||!isW(x,y)||(wb==='ocean_001'&&T[y][x]!=='shallow_water'))return;dirs.forEach(([a,b,f])=>{const sx=x-a,sy=y-b;if(inb(sx,sy)&&!COL[sy][sx]&&post[sy*MW+sx]&&RG[sy][sx]!=='cliff'&&T[sy][sx]!=='rock'&&!seenS.has(sx+','+sy)){seenS.add(sx+','+sy);cand.push({sx,sy,x,y,f,a:Math.atan2(sy-c[1],sx-c[0])})}})});
+cand.sort((p,q)=>p.a-q.a);for(let i=0;i<n&&cand.length;i++){const k=cand[Math.floor(i*cand.length/n)];out.push({id:`${nm}_fishing_${String(i+1).padStart(3,'0')}`,type:'fishing_spot',waterBodyId:wb,waterTarget:{x:k.x,y:k.y},standPosition:{x:k.sx,y:k.sy},facing:k.f,interaction:'fish',resourceType:'food',requires:['fishing_unlocked'].concat(i>=4&&nm==='lake'?['fishing_level_2']:[]).concat(pre[k.sy*MW+k.sx]?[]:['bridge_repaired']),enabledByDefault:false})}});return out})();
+const villageTiles=tilesWhere((x,y)=>EL(23,41,9.5,6.5,x,y)<1&&['grass','dirt'].includes(T[y][x])&&!COL[y][x]&&!PATH.has(x+','+y)&&RG[y][x]!=='campfire_core'&&RG[y][x]!=='farmland');
+const BZ=[{id:'village_zone_001',type:'building_zone',allowedBuildingTypes:['house','family_house','food_storage','research_hut','crafting_hut','healing_hut','school','collection_hut'],tiles:villageTiles},
+{id:'campfire_zone_001',type:'building_zone',allowedBuildingTypes:['campfire'],tiles:tilesWhere((x,y)=>RG[y][x]==='campfire_core'&&!COL[y][x])},
+{id:'dock_zone_001',type:'building_zone',allowedBuildingTypes:['fishing_dock'],tiles:tilesWhere((x,y)=>RG[y][x]==='lake_shore'&&y>=33&&x>=32&&x<=40&&!COL[y][x]&&nearWater(x,y,'lake_001',1)).slice(0,8)},
+{id:'garden_zone_001',type:'building_zone',allowedBuildingTypes:['flower_garden_restoration'],tiles:fpt(OBJS.find(o=>o.type==='garden')).map(([x,y])=>[x,y])}];
+const FZ=[{id:'farm_zone_001',type:'farming_zone',tiles:tilesWhere((x,y)=>T[y][x]==='fertile_soil'&&!COL[y][x]),cropTypes:Object.keys(CROP),states:['unprepared','tilled','watered','seeds','sprouts','growing','mature','harvested']}];
+const sz=(id,items,pred,cond)=>({id,type:'collectible_spawn_zone',allowedItems:items,tiles:tilesWhere((x,y)=>ok(x,y)&&pred(x,y)),conditions:Object.assign({timeOfDay:['day'],weather:['clear'],requires:null},cond||{})});
+const SZ=[sz('forest_insects_001',['stag_beetle','forest_moth','cicada'],(x,y)=>RG[y][x]==='forest'),sz('butterfly_meadow_001',['monarch_butterfly','blue_butterfly','ladybug'],(x,y)=>RG[y][x]==='meadow'),sz('grasshopper_meadow_001',['grasshopper'],(x,y)=>RG[y][x]==='meadow'&&V[y][x]==='grass_tall'),
+sz('river_dragonflies_001',['dragonfly'],(x,y)=>T[y][x]!=='sand'&&nearWater(x,y,'river_001',2)),sz('fireflies_001',['firefly'],(x,y)=>RG[y][x]==='forest'||nearWater(x,y,'lake_001',2),{timeOfDay:['night']}),
+sz('beach_shells_001',['seashell','starfish'],(x,y)=>RG[y][x]==='beach'&&ND(x,y)>.93),sz('beach_driftwood_001',['driftwood','washed_up_crate','coconut'],(x,y)=>RG[y][x]==='beach'&&ND(x,y)>.95),
+sz('forest_mushrooms_001',['red_mushroom','brown_mushroom'],(x,y)=>RG[y][x]==='forest'),sz('rare_flowers_001',['rare_flower'],(x,y)=>RG[y][x]==='meadow'&&HH(x,y,40)<.25,{requires:'botany_unlocked'}),
+sz('cave_minerals_001',['crystal','clay'],(x,y)=>RG[y][x]==='rocky'),sz('ancient_artifacts_001',['ancient_pottery','stone_tablet','ancient_fragment'],(x,y)=>inNE(x,y),{timeOfDay:['day','night'],weather:['any'],requires:'bridge_repaired'})];
+const P_=(id,name,obj,req,unlocks,extra)=>Object.assign({id:'puzzle_'+id,type:'puzzle',puzzleId:id,name,objectId:obj,state:'locked',interactionPoints:OBJS.find(o=>o.id===obj).interactionPoints,requires:req,unlocks},extra||{});
+const PUZ=[P_('light_campfire','Starting campfire','campfire_site_001',['wood'],'village_hub'),P_('unblock_spring','Blocked freshwater spring','spring_blocked_001',['stone','research_level_1'],'freshwater_spring'),
+P_('repair_bridge','Broken bridge','broken_bridge_001',['construction_level_2','rope','wood'],'eastern_region',{assetId:'bridge_broken',states:{locked:{assetId:'bridge_broken',walkableOverride:false},restored:{assetId:'bridge_repaired',walkableOverride:true}},footprintTiles:brFp()}),
+P_('restore_garden','Abandoned flower garden','flower_garden_001',['seeds','research_level_2'],'restored_garden'),P_('light_cave','Dark cave','cave_entrance_001',['torch','research_level_3'],'cave_interior',{entranceTile:{x:18,y:23}}),
+P_('open_waterfall_passage','Hidden waterfall entrance','waterfall_001',['ancient_fragment'],'waterfall_passage',{blockedEntrance:{x:37,y:14}}),P_('restore_monument','Ancient monument','ancient_monument_001',['fragment_1','fragment_2','fragment_3','fragment_4'],'game_victory',{fragmentSlots:4,dependsOn:['repair_bridge']})];
+const UNL=[{id:'eastern_region',type:'locked_region',contains:['ancient_monument_001','stone_ruins_001'],requires:'bridge_repaired',unlockedBy:'repair_bridge',tiles:tilesWhere(inNE)},{id:'cave_interior',type:'locked_region',requires:'cave_unlocked',unlockedBy:'light_cave',tiles:[[18,23]]},{id:'waterfall_passage',type:'locked_region',requires:'waterfall_unlocked',unlockedBy:'open_waterfall_passage',tiles:[[37,14]]}];
+const BG=[],FG=[];each((x,y)=>{(BG[y]=BG[y]||[])[x]=0;(FG[y]=FG[y]||[])[x]=0});BZ.forEach(z=>z.tiles.forEach(([x,y])=>{if(!COL[y][x]||z.id==='garden_zone_001'||z.id==='dock_zone_001')BG[y][x]=1}));FZ[0].tiles.forEach(([x,y])=>FG[y][x]=1);
+/* ---------- rendering ---------- */
+const FR={sand:'#e8d9a8',dirt:'#b08d60',fertile_soil:'#7a5a3a',grass:'#5f8250',rock:'#9a9488',cliff:'#7d7468'},PR={deep_water:0,shallow_water:1,sand:2,dirt:3,fertile_soil:3,grass:4,rock:5,cliff:6};
+function symMap(id){if(id.startsWith('t_'))return{m:TL[id.slice(2)],w:16,h:16};if(id.endsWith('__top')){const a=AS[id.slice(2,-5)],m=new Map();a.m.forEach((c,k)=>{if(k<a.w*(a.h-14))m.set(k,c)});return{m,w:a.w,h:a.h}}const a=AS[id.slice(2)];return{m:a.m,w:a.w,h:a.h}}
+const EFX={};let EFXON=true;
+function effectsStr(f,U){let s='';const an=k=>ANIMS[k].frames[f%ANIMS[k].n];RIP.forEach(([x,y])=>s+=`<use href="${U('a_'+an('water_ripple'))}" x="${x*16}" y="${y*16}"/>`);WAV.forEach(([x,y,dx,dy])=>s+=`<use href="${U('a_'+an('shore_waves'))}" x="${x*16+dx}" y="${y*16+dy}"/>`);
+const wf=OBJS.find(o=>o.type==='waterfall');s+=`<use href="${U('a_'+an('waterfall_flow'))}" x="${wf.anchor.x-24}" y="${wf.anchor.y-64}"/>`;return s}
+const RIP=tilesWhere((x,y)=>isW(x,y)&&WB[y][x]!=='ocean_001'?HH(x,y,50)<.1:T[y][x]==='shallow_water'&&HH(x,y,51)<.05),WAV=[];each((x,y)=>{if(T[y][x]==='shallow_water'&&WB[y][x]==='ocean_001'){[[1,0,8,0],[-1,0,-8,0],[0,1,0,8],[0,-1,0,-8]].forEach(([a,b,dx,dy])=>{if(inb(x+a,y+b)&&T[y+b][x+a]==='sand'&&HH(x,y,52)<.35&&dy===0)WAV.push([x,y,0,5])})}});
+function assetOf(o,st,ov){const k=ov[o.id];if(k&&o.states&&o.states[k])return o.states[k];if(o.type==='bridge')return['bridge_broken','bridge_partial','bridge_repaired'][st.bridge];if(o.type==='garden')return['garden_abandoned','garden_partial','garden_restored'][st.garden];if(o.type==='monument')return'monument_'+['inactive','fragments_1','fragments_2','fragments_3','fragments_4','restored'][st.mon];return o.assetId}
+function renderMap(st,o={}){const ov=o.ov||{},used=new Set(),U=id=>{used.add(id);return'#'+id},only=o.only,G={};const add=(g,s)=>G[g]=(G[g]||'')+s;
+add('ocean-background',`<rect width="1280" height="1024" fill="#3f7f9c"/>`);const farmSet=new Set(FZ[0].tiles.map(([x,y])=>x+','+y));
+each((x,y)=>{let v=V[y][x];if(farmSet.has(x+','+y))v=st.farm?(st.farm===2?'soil_watered':'soil_tilled'):v;add('terrain-base',`<use href="${U('t_'+v)}" x="${x*16}" y="${y*16}"/>`);
+const t=T[y][x],p=PR[t];[[1,0,'r'],[-1,0,'l'],[0,1,'d'],[0,-1,'u']].forEach(([a,b,d])=>{const X=x+a,Y=y+b;if(!inb(X,Y))return;const n=T[Y][X],q=PR[n];if(q<=p&&!(q===p&&false))return;if(t==='cliff'||n==='cliff'&&t!=='rock'&&false)return;if(n==='shallow_water'||n==='deep_water')return;const c=FR[n]||'#fff';let s='',run=0,pd=0;for(let i=0;i<=16;i++){const dp=i<16?1+(HH(x*16+i,y,d.charCodeAt(0))<.5?1:0)+(HH(x*16+i,y,7)<.12?1:0):-1;if(dp!==pd&&i>0){const w=i-run;if(pd>0)s+=d==='r'?`M${16-pd} ${run}h${pd}v${w}h-${pd}z`:d==='l'?`M0 ${run}h${pd}v${w}h-${pd}z`:d==='d'?`M${run} ${16-pd}h${w}v${pd}h-${w}z`:`M${run} 0h${w}v${pd}h-${w}z`;run=i}pd=dp}add('terrain-transitions',`<path fill="${c}" transform="translate(${x*16} ${y*16})" d="${s}"/>`)});
+if(T[y][x]==='shallow_water'&&WB[y][x]==='ocean_001')[[1,0],[-1,0],[0,1],[0,-1]].forEach(([a,b])=>{if(inb(x+a,y+b)&&T[y+b][x+a]==='sand'&&HH(x,y,9)<.8)add('water-details',b?`<path fill="#fff" d="M${x*16+2+HH(x,y,3)*4|0} ${y*16+(b>0?12:3)}h4v1h-4zM${x*16+9} ${y*16+(b>0?13:2)}h3v1h-3z"/>`:`<path fill="#fff" d="M${x*16+(a>0?12:3)} ${y*16+3}h1v4h-1zM${x*16+(a>0?13:2)} ${y*16+10}h1v3h-1z"/>`)})});
+if(st.farm){const rows={};FZ[0].tiles.forEach(([x,y])=>{const k=Object.keys(CROP)[(y*7+x)%5],stg=Math.min(3,Math.max(0,x-29>>1));if(HH(x,y,60)<.8&&(y%2===0))add('paths-and-farmland',`<use href="${U(`a_crop_${k}_${st.farm===2?3:stg}`)}" x="${x*16}" y="${y*16}"/>`)})}
+for(const ob of OBJS){const as=assetOf(ob,st,ov),a=AS[as],x=ob.anchor.x-a.w/2,y=ob.anchor.y-a.h,g=ob.layer;add(g,`<g id="${ob.id}" data-object-type="${ob.type}" data-asset="${as}" class="${ob.cls}${/tree|palm|bush/.test(ob.type)?' veg':''}"><use href="${U('a_'+as)}" x="${x}" y="${y}"/></g>`);if(ob.canopy)add('foreground-canopies',`<use href="${U('a_'+as+'__top')}" x="${x}" y="${y}" data-for="${ob.id}"/>`)}
+if(!o.noFx&&EFXON){for(let f=0;f<4;f++)EFX[f]=effectsStr(f,U);G['environment-effects']=EFX[0]}
+const defs=[...used].map(id=>{const s=symMap(id);return`<g id="${id}">${runs(s.m,s.w,s.h)}</g>`}).join('');
+const order=['ocean-background','terrain-base','terrain-transitions','water-details','ground-decoration','paths-and-farmland','resource-objects','landmarks','foreground-canopies','environment-effects'];
+const body=order.map(g=>(!only||only.includes(g))?`<g id="${g}">${G[g]||''}</g>`:'').join(''),z=o.s||1;
+return`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1024" width="${1280*z}" height="${1024*z}" shape-rendering="crispEdges"><defs>${defs}</defs>${body}</svg>`}
+/* ---------- app state / UI ---------- */
+const S={z:1,px:0,py:0,st:{bridge:0,farm:0,garden:0,mon:0},ov:{},lay:{terrain:1,water:1,veg:1,res:1,decor:1,land:1,fore:1,anim:1},dbg:{},sel:null,fs:null,hi:null,fr:0};
+const ZS=[.5,1,2,3,4,6,8],tt=m=>{const t=$('#toast');t.textContent=m;t.style.opacity=1;clearTimeout(tt.h);tt.h=setTimeout(()=>t.style.opacity=0,1800)};
+const STS=[['Starting island',{bridge:0,farm:0,garden:0,mon:0}],['Bridge restored',{bridge:2,farm:0,garden:0,mon:0}],['Farmland prepared',{bridge:0,farm:1,garden:0,mon:0}],['Flower garden restored',{bridge:0,farm:0,garden:2,mon:0}],['Monument restored',{bridge:0,farm:0,garden:0,mon:5}],['Fully restored',{bridge:2,farm:2,garden:2,mon:5}]];
+const LAYS=[['terrain','Terrain','#terrain-base,#terrain-transitions'],['water','Water details','#water-details'],['veg','Vegetation','.veg'],['res','Resources','#resource-objects'],['decor','Ground decorations','#ground-decoration'],['land','Landmarks','#landmarks'],['fore','Foreground canopies','#foreground-canopies'],['anim','Environmental animations','#environment-effects']];
+const DBGS=[['grid','Tile grid','#fff'],['coords','Tile coordinates','#fff'],['walk','Walkable','#3c3'],['block','Collision','#d33'],['build','Buildable','#fd2'],['farm','Farmable','#f93'],['fish','Fishing spots','#39f'],['ip','Interaction positions','#a5e'],['spawn','Villager spawns','#fff'],['ids','Object IDs','#fff'],['sz','Collectible zones','#f6a'],['puz','Puzzle locations','#a5e'],['lock','Locked areas','#900'],['anc','Depth anchors','#fff']];
+const vp=$('#vp'),pan=$('#pan');
+function drawMap(){$('#mapw').innerHTML=renderMap(S.st,{ov:S.ov,s:1});$('#mapw svg').style.cssText='';applyLay();drawDbg()}
+function applyLay(){$('#lyr').textContent=LAYS.filter(l=>!S.lay[l[0]]).map(l=>l[2]+'{display:none}').join('')}
+function xf(){pan.style.transform=`translate(${S.px}px,${S.py}px) scale(${S.z})`;$('#zl').textContent=S.z+'×'}
+function fit(){const r=Math.min(vp.clientWidth/1280,vp.clientHeight/1024);S.z=[...ZS].reverse().find(z=>z<=r)||.5;S.px=(vp.clientWidth-1280*S.z)/2;S.py=(vp.clientHeight-1024*S.z)/2;xf()}
+function zoom(d,cx,cy){const i=Math.max(0,Math.min(ZS.length-1,ZS.indexOf(S.z)+d));if(cx===undefined){cx=vp.clientWidth/2;cy=vp.clientHeight/2}const nz=ZS[i],wx=(cx-S.px)/S.z,wy=(cy-S.py)/S.z;S.z=nz;S.px=cx-wx*nz;S.py=cy-wy*nz;xf();if(S.dbg.coords||S.dbg.ids)drawDbg()}
+$('#zi').onclick=()=>zoom(1);$('#zo').onclick=()=>zoom(-1);$('#fit').onclick=fit;$('#rst').onclick=()=>{S.z=1;S.px=S.py=0;xf()};$('#fs').onclick=()=>vp.requestFullscreen&&vp.requestFullscreen();
+vp.addEventListener('wheel',e=>{e.preventDefault();const r=vp.getBoundingClientRect();zoom(e.deltaY<0?1:-1,e.clientX-r.left,e.clientY-r.top)},{passive:false});
+let drag=null;vp.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,px:S.px,py:S.py,m:0};vp.setPointerCapture(e.pointerId)});
+vp.addEventListener('pointermove',e=>{const r=vp.getBoundingClientRect(),tx=Math.floor((e.clientX-r.left-S.px)/S.z/16),ty=Math.floor((e.clientY-r.top-S.py)/S.z/16);$('#hov').textContent=inb(tx,ty)?`tile ${tx},${ty}`:'';if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>4)drag.m=1;if(drag.m){S.px=drag.px+dx;S.py=drag.py+dy;xf()}}});
+vp.addEventListener('pointerup',e=>{if(drag&&!drag.m){const r=vp.getBoundingClientRect(),wx=(e.clientX-r.left-S.px)/S.z,wy=(e.clientY-r.top-S.py)/S.z;pick(wx,wy)}drag=null});
+function tileInfo(x,y){const t=T[y][x],d=TERRAIN_TYPES[t],ob=OBJS.filter(o=>fpt(o).some(([a,b])=>a===x&&b===y)),c=colFor(S.st);return{tile:{x,y},world:{x:x*16,y:y*16,centerX:x*16+8,centerY:y*16+8},terrain:t,tileVisual:V[y][x],walkable:!c[y][x],terrainWalkable:d.walkable,buildable:!!BG[y][x],farmable:!!FG[y][x],water:d.water,fishableWater:!!d.fishable,waterBodyId:WB[y][x],resourceObjectIds:ob.map(o=>o.id),collision:!!c[y][x],region:RG[y][x],spawnZones:SZ.filter(z=>z.tiles.some(([a,b])=>a===x&&b===y)).map(z=>z.id),buildingZones:BZ.filter(z=>z.tiles.some(([a,b])=>a===x&&b===y)).map(z=>z.id),reachableFromStart:!!pre[y*MW+x]}}
+function pick(wx,wy){const x=Math.floor(wx/16),y=Math.floor(wy/16);if(!inb(x,y))return;let best=null;OBJS.forEach(o=>{const a=AS[assetOf(o,S.st,S.ov)],l=o.anchor.x-a.w/2,t=o.anchor.y-a.h;if(wx>=l&&wx<l+a.w&&wy>=t&&wy<t+a.h&&(!best||o.sortY>=best.sortY)&&(o.layer!=='ground-decoration'||fpt(o).some(([a,b])=>a===x&&b===y)))best=o});
+const fs=FISH.find(f=>(f.standPosition.x===x&&f.standPosition.y===y)||(f.waterTarget.x===x&&f.waterTarget.y===y));S.fs=fs?fs.id:null;$('#fsel').value=S.fs||'';
+if(fs){S.sel={kind:'fish',data:fs}}else if(best){S.sel={kind:'obj',data:best}}else S.sel={kind:'tile',data:tileInfo(x,y)};S.hi={x,y};showSel();drawDbg()}
+function showSel(){const s=S.sel;if(!s)return;let d=s.data;const os=$('#osel');os.style.display='none';if(s.kind==='obj'){const o=d;d=Object.assign({},o,{worldPosition:{x:o.tile.x*16,y:o.tile.y*16},groundAnchor:o.anchor,collisionFootprintTiles:fpt(o),currentAsset:assetOf(o,S.st,S.ov),availableStates:o.states?Object.keys(o.states):null,unlockConditions:(PUZ.find(p=>p.objectId===o.id)||{}).requires||null});
+if(o.states){os.style.display='';os.innerHTML=Object.keys(o.states).map(k=>`<option ${S.ov[o.id]===k?'selected':''}>${k}</option>`).join('');os.onchange=()=>{S.ov[o.id]=os.value;drawMap();showSel()}}}
+if(s.kind==='fish')d=Object.assign({},d,{highlight:'standPosition (cyan) → waterTarget (blue), facing '+d.facing});$('#insp').textContent=JSON.stringify(d,null,1);s.json=d}
+$('#bcp').onclick=async()=>{const t=$('#insp').textContent;try{await navigator.clipboard.writeText(t)}catch(e){const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();try{document.execCommand('copy')}catch(_){}a.remove()}tt('Copied')};
+$('#fsel').innerHTML='<option value="">Fishing spots…</option>'+FISH.map(f=>`<option value="${f.id}">${f.id}</option>`).join('');
+$('#fsel').onchange=e=>{const f=FISH.find(q=>q.id===e.target.value);if(!f)return;S.fs=f.id;S.sel={kind:'fish',data:f};S.hi=f.standPosition;showSel();drawDbg();S.px=vp.clientWidth/2-f.standPosition.x*16*S.z;S.py=vp.clientHeight/2-f.standPosition.y*16*S.z;xf()};
+function drawDbg(){const D=S.dbg,tn=(x,y,c,o)=>`<rect x="${x*16}" y="${y*16}" width="16" height="16" fill="${c}" fill-opacity="${o}"/>`,col=colFor(S.st);let s='';
+if(D.walk||D.block||D.build||D.farm)each((x,y)=>{if(D.walk&&!col[y][x])s+=tn(x,y,'#3c3',.28);if(D.block&&col[y][x]&&RG[y][x]!=='ocean')s+=tn(x,y,'#d33',.35);if(D.build&&BG[y][x])s+=tn(x,y,'#fd2',.5);if(D.farm&&FG[y][x])s+=tn(x,y,'#f93',.5);if(D.fish&&isW(x,y)&&FISH.some(f=>f.waterTarget.x===x&&f.waterTarget.y===y))s+=tn(x,y,'#39f',.7)});
+if(D.fish)FISH.forEach(f=>{s+=tn(f.standPosition.x,f.standPosition.y,'#0ff',.7);const a={right:[1,0],left:[-1,0],up:[0,-1],down:[0,1]}[f.facing];s+=`<path d="M${f.standPosition.x*16+8} ${f.standPosition.y*16+8}l${a[0]*12} ${a[1]*12}" stroke="#fff" stroke-width="2"/>`});
+if(D.sz)SZ.forEach((z,i)=>z.tiles.forEach(([x,y])=>s+=tn(x,y,`hsl(${i*37},90%,65%)`,.4)));
+if(D.ip)OBJS.forEach(o=>o.interactionPoints.forEach(p=>s+=`<rect x="${p.x*16+5}" y="${p.y*16+5}" width="6" height="6" fill="#a5e" stroke="#fff"/>`));
+if(D.spawn)SPAWN.forEach(([x,y])=>s+=`<path d="M${x*16+8} ${y*16+1}l6 7l-6 7l-6-7z" fill="#fff" stroke="#000"/>`);
+if(D.puz)PUZ.forEach(p=>{const o=OBJS.find(q=>q.id===p.objectId);fpt(o).forEach(([x,y])=>s+=`<rect x="${x*16}" y="${y*16}" width="16" height="16" fill="none" stroke="#c6f" stroke-width="2"/>`)});
+if(D.lock)UNL[0].tiles.forEach(([x,y])=>s+=tn(x,y,'#900',.35));
+if(D.anc)OBJS.forEach(o=>s+=`<path d="M${o.anchor.x-3} ${o.anchor.y}h6M${o.anchor.x} ${o.anchor.y-3}v6" stroke="#fff" stroke-width="1"/>`);
+if(D.ids)OBJS.forEach(o=>{if(S.z>=3||o.layer==='landmarks')s+=`<text x="${o.anchor.x}" y="${o.anchor.y-2}" font-size="5" text-anchor="middle" fill="#fff" stroke="#000" stroke-width=".6" paint-order="stroke">${o.id}</text>`});
+if(D.grid)s+=`<defs><pattern id="gp" width="16" height="16" patternUnits="userSpaceOnUse"><path d="M16 0H0V16" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width=".5"/></pattern></defs><rect width="1280" height="1024" fill="url(#gp)"/>`;
+if(D.coords&&S.z>=3)each((x,y)=>s+=`<text x="${x*16+1}" y="${y*16+6}" font-size="4" fill="#fff" stroke="#000" stroke-width=".5" paint-order="stroke">${x},${y}</text>`);
+if(S.fs){const f=FISH.find(q=>q.id===S.fs);s+=tn(f.standPosition.x,f.standPosition.y,'#0ff',.8)+tn(f.waterTarget.x,f.waterTarget.y,'#39f',.8)}
+if(S.hi)s+=`<rect x="${S.hi.x*16}" y="${S.hi.y*16}" width="16" height="16" fill="none" stroke="#ff0" stroke-width="1.5"/>`;$('#dbg').innerHTML=s}
+$('#lays').innerHTML=LAYS.map(l=>`<label class="chk"><input type="checkbox" data-l="${l[0]}" checked>${l[1]}</label>`).join('');$('#dbgs').innerHTML=DBGS.map(l=>`<label class="chk"><input type="checkbox" data-d="${l[0]}"><i style="display:inline-block;width:9px;height:9px;background:${l[2]}"></i> ${l[1]}</label>`).join('');
+$('#lg').innerHTML='<span><i style="background:#3c3"></i>walkable</span><span><i style="background:#d33"></i>blocked</span><span><i style="background:#39f"></i>fishable water</span><span><i style="background:#0ff"></i>fishing stand</span><span><i style="background:#fd2"></i>buildable</span><span><i style="background:#f93"></i>farmable</span><span><i style="background:#a5e"></i>puzzle/interaction</span>';
+$('#lays').onchange=e=>{S.lay[e.target.dataset.l]=e.target.checked;applyLay();if(e.target.dataset.l==='anim')EFXON=e.target.checked,drawMap()};$('#dbgs').onchange=e=>{S.dbg[e.target.dataset.d]=e.target.checked;drawDbg()};
+$('#sts').innerHTML=STS.map((s,i)=>`<button data-s="${i}" class="${i?'':'on'}">${s[0]}</button>`).join('');$('#sts').onclick=e=>{const i=e.target.dataset.s;if(i===undefined)return;S.st=Object.assign({},STS[i][1]);S.ov={};document.querySelectorAll('#sts button').forEach(b=>b.classList.toggle('on',b===e.target));drawMap()};
+setInterval(()=>{if(!EFXON||!S.lay.anim)return;S.fr=(S.fr+1)%4;const g=$('#environment-effects');if(g&&EFX[S.fr])g.innerHTML=EFX[S.fr]},250);
+/* ---------- validation ---------- */
+function validateMap(){const r=[],E=(m,x,y,id)=>r.push({ok:0,m,x,y,id}),K=(m)=>r.push({ok:1,m});
+[T,V,WB,RG,COL,BG,FG].every(g=>g.length===MH&&g.every(row=>row.length===MW))?K('All grids are 80×64'):E('Grid dimension mismatch');
+const ids=new Set();const nne=o=>x=>0;OBJS.forEach(o=>{if(ids.has(o.id))E('Duplicate id '+o.id,o.tile.x,o.tile.y,o.id);ids.add(o.id);if(!AS[o.assetId])E('Missing asset '+o.assetId,o.tile.x,o.tile.y,o.id);Object.values(o.states||{}).forEach(a=>!AS[a]&&E('Missing state asset '+a,o.tile.x,o.tile.y,o.id));fpt(o).forEach(([x,y])=>{if(!inb(x,y))E('Footprint out of map '+o.id,x,y,o.id)});
+if(o.decorative||o.type==='reeds'||o.type==='water_lily'||inNE(o.tile.x,o.tile.y))return;if(o.blocksMovement&&!o.interactionPoints.length)E('No reachable interaction point for '+o.id,o.tile.x,o.tile.y,o.id);o.interactionPoints.forEach(p=>{if(!inb(p.x,p.y)||COL[p.y][p.x])E('Interaction point blocked '+o.id,p.x,p.y,o.id);else if(!pre[p.y*MW+p.x]&&!(o.type==='bridge'))E('Interaction point unreachable from start: '+o.id,p.x,p.y,o.id)})});K('Object ids/assets/footprints checked ('+OBJS.length+' objects)');
+FISH.forEach(f=>{const s=f.standPosition,t=f.waterTarget,d={right:[1,0],left:[-1,0],up:[0,-1],down:[0,1]}[f.facing];if(COL[s.y][s.x])E('Stand tile blocked '+f.id,s.x,s.y,f.id);if(!isW(t.x,t.y))E('Target not water '+f.id,t.x,t.y,f.id);if(s.x+d[0]!==t.x||s.y+d[1]!==t.y)E('Facing wrong '+f.id,s.x,s.y,f.id);const need=f.requires.includes('bridge_repaired')?post:pre;if(!need[s.y*MW+s.x])E('Stand unreachable '+f.id,s.x,s.y,f.id)});K(FISH.length+' fishing spots checked');
+BZ.forEach(z=>z.tiles.forEach(([x,y])=>{if(z.id!=='garden_zone_001'&&z.id!=='dock_zone_001'&&COL[y][x])E('Building zone on blocked tile '+z.id,x,y,z.id)}));FZ[0].tiles.forEach(([x,y])=>{if(T[y][x]!=='fertile_soil')E('Farm tile not fertile',x,y,'farm_zone_001')});
+SZ.forEach(z=>{if(!z.tiles.length)E('Empty spawn zone '+z.id,0,0,z.id);z.tiles.forEach(([x,y])=>{if(COL[y][x])E('Spawn tile blocked '+z.id,x,y,z.id)})});
+const b=OBJS.find(o=>o.type==='bridge'),fo=brFp(),sb=pre[(BR.y1+1)*MW+BR.x];sb?K('South bank reachable'):E('South bank of bridge unreachable',BR.x,BR.y1+1,b.id);
+const nbank=post[(BR.y0-1)*MW+BR.x],nbp=pre[(BR.y0-1)*MW+BR.x];nbank&&!nbp?K('Repaired bridge connects both banks; north bank locked before repair'):E('Bridge does not isolate/connect banks as intended',BR.x,BR.y0-1,b.id);
+const ne=UNL[0].tiles;ne.length&&ne.every(([x,y])=>!pre[y*MW+x])?K('Eastern region locked pre-bridge ('+ne.length+' tiles)'):E('Eastern region is reachable before bridge repair',ne[0]?ne[0][0]:0,ne[0]?ne[0][1]:0,'eastern_region');ne.filter(([x,y])=>!COL[y][x]&&!post[y*MW+x]).slice(0,5).forEach(([x,y])=>E('Locked-region tile unreachable after bridge',x,y,'eastern_region'));
+SPAWN.forEach(([x,y])=>COL[y][x]&&E('Spawn blocked',x,y,'spawn'));K('Villager spawns walkable');
+{const m=OBJS.find(q=>q.type==='monument'),p=m.interactionPoints[0];p&&post[p.y*MW+p.x]&&!pre[p.y*MW+p.x]?K('Monument reachable only after repairing the bridge'):E('Monument access wrong (must be locked before the bridge, reachable after)',m.tile.x,m.tile.y,m.id)}
+['campfire_site','cave_entrance','waterfall','spring'].forEach(t=>{const o=OBJS.find(q=>q.type===t);if(!pre[o.interactionPoints[0].y*MW+o.interactionPoints[0].x])E('Puzzle unreachable '+o.id,o.interactionPoints[0].x,o.interactionPoints[0].y,o.id)});
+const food=OBJS.filter(o=>/berry|tree|rock|palm/.test(o.type)&&!inNE(o.tile.x,o.tile.y)&&o.interactionPoints.length&&!o.interactionPoints.some(p=>pre[p.y*MW+p.x]));food.length?food.slice(0,8).forEach(o=>E('Resource unreachable pre-bridge '+o.id,o.tile.x,o.tile.y,o.id)):K('All early resources reachable');return r}
+$('#bval').onclick=()=>{const r=validateMap(),e=r.filter(q=>!q.ok);$('#vsum').textContent=e.length?e.length+' problem(s)':'All checks passed';$('#vres').innerHTML=r.map((q,i)=>`<div class="err ${q.ok?'o':'e'}" data-i="${i}">${q.ok?'✔':'✖'} ${esc(q.m)}${q.ok?'':` @ (${q.x},${q.y}) ${esc(q.id||'')}`}</div>`).join('');$('#vres').onclick=ev=>{const d=ev.target.closest('[data-i]');if(!d)return;const q=r[d.dataset.i];if(q.ok)return;S.hi={x:q.x,y:q.y};S.px=vp.clientWidth/2-q.x*16*S.z;S.py=vp.clientHeight/2-q.y*16*S.z;xf();drawDbg();window.scrollTo({top:0,behavior:'smooth'})}};
+/* ---------- gallery + animations ---------- */
+const assetSVG=(id,s)=>{const a=id.startsWith('t_')?{m:TL[id.slice(2)],w:16,h:16}:AS[id];return`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${a.w} ${a.h}" width="${a.w*s}" height="${a.h*s}" shape-rendering="crispEdges">${runs(a.m,a.w,a.h)}</svg>`};
+const CATS=['Terrain','Water','Trees','Bushes','Flowers','Rocks','Resources','Crops','Collectibles','Landmarks','Animations'],catOf=c=>c==='Terrain'||c==='Water'?'tiles':c;
+const items=c=>c==='Terrain'?Object.keys(TL).filter(k=>!k.startsWith('w_')).map(k=>'t_'+k):c==='Water'?Object.keys(TL).filter(k=>k.startsWith('w_')).map(k=>'t_'+k):Object.keys(AS).filter(k=>AS[k].cat===c);
+$('#gcat').innerHTML=CATS.map(c=>`<option>${c}</option>`).join('');
+function drawGal(){const c=$('#gcat').value,L=items(c);$('#gal').innerHTML=L.map((id,i)=>{const a=id.startsWith('t_')?{w:16,h:16}:AS[id],s=Math.max(1,Math.min(6,Math.floor(96/Math.max(a.w,a.h))));return`<div class="cell"><div>${assetSVG(id,1)}${assetSVG(id,s)}</div>${esc(id.replace(/^t_/,''))}<br>${a.w}×${a.h}${a.fp?' fp '+a.fp.join('×'):''}<br><button data-a="${i}" data-k="svg">SVG</button><button data-a="${i}" data-k="png">PNG</button></div>`}).join('');$('#gal').onclick=async e=>{const i=e.target.dataset.a;if(i===undefined)return;const id=L[i],a=id.startsWith('t_')?{w:16,h:16}:AS[id],n=id.replace(/^t_/,'');if(e.target.dataset.k==='svg')saveFile(n+'.svg',assetSVG(id,1));else saveFile(n+'.png',await png(assetSVG(id,4),a.w*4,a.h*4))}}
+$('#gcat').onchange=drawGal;drawGal();
+$('#ans').innerHTML=Object.entries(ANIMS).map(([k,a])=>`<div class="cell"><div data-an="${k}"></div>${k}<br>${a.n}f @${a.fps}fps<br><button data-sheet="${k}">Sheet PNG</button></div>`).join('');
+setInterval(()=>{const t=Date.now();document.querySelectorAll('[data-an]').forEach(d=>{const a=ANIMS[d.dataset.an],f=Math.floor(t/1000*a.fps)%a.n,s=Math.max(1,Math.min(4,Math.floor(64/Math.max(a.w,a.h))));if(d._f!==f){d._f=f;d.innerHTML=assetSVG(a.frames[f],s)}})},100);
+$('#ans').onclick=async e=>{const k=e.target.dataset.sheet;if(!k)return;const a=ANIMS[k];saveFile(k+'_sheet.png',await png(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${a.w*a.n} ${a.h}" width="${a.w*a.n*4}" height="${a.h*4}" shape-rendering="crispEdges">${a.frames.map((f,i)=>`<g transform="translate(${i*a.w} 0)">${runs(AS[f].m,a.w,a.h)}</g>`).join('')}</svg>`,a.w*a.n*4,a.h*4))};
+/* ---------- exports ---------- */
+async function saveFile(name,data){const d=window.claude&&await claude.use('downloads');if(d){try{await d.save({filename:name,data});return}catch(e){if(!e||e.code!=='declined')tt('Save failed');return}}const a=document.createElement('a');a.href=URL.createObjectURL(data instanceof Blob?data:new Blob([data]));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
+const png=(svg,w,h)=>new Promise(r=>{const i=new Image();i.onload=()=>{const k=document.createElement('canvas');k.width=w;k.height=h;const x=k.getContext('2d');x.imageSmoothingEnabled=false;x.drawImage(i,0,0,w,h);k.toBlob(r,'image/png')};i.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)});
+function buildData(){return{meta:{name:'Island Map Studio',tileSize:TS,width:MW,height:MH,pixelWidth:1280,pixelHeight:1024,coordinateSystem:'origin top-left, x right, y down; grid[y][x]; object tile = left tile of footprint bottom row, footprint extends right/up; anchor = bottom-center px; sortY = anchor.y'},terrainTypes:TERRAIN_TYPES,terrainGrid:T,tileVisualGrid:V,regionGrid:RG,waterBodyGrid:WB,collisionGrid:COL,buildableGrid:BG,farmableGrid:FG,waterBodies:WATER_BODIES,objects:OBJS,fishingSpots:FISH,buildingZones:BZ,farmingZones:FZ,collectibleSpawnZones:SZ,villagerSpawns:SPAWN.map(([x,y])=>({x,y})),puzzleLocations:PUZ,unlockableAreas:UNL,bridge:{footprint:brFp().map(([x,y])=>({x,y})),walkableWhenRepaired:true},environmentAssets:Object.values(AS).map(a=>({id:a.id,category:a.cat,width:a.w,height:a.h,groundAnchor:'bottom-center',collisionFootprintTiles:a.fp})),animations:Object.entries(ANIMS).map(([k,a])=>({id:k,frames:a.frames,frameCount:a.n,fps:a.fps,width:a.w,height:a.h}))}}
+const XD=[['map-data',()=>({meta:buildData().meta,waterBodies:WATER_BODIES,regionGrid:RG})],['terrain-grid',()=>({terrain:T,tileVisual:V,waterBody:WB,regions:RG})],['collision-grid',()=>({convention:'1 = blocked, 0 = walkable (base state)',collision:COL,bridgeOverrideTiles:brFp()})],['building-zones',()=>BZ],['farming-zones',()=>FZ],['fishing-spots',()=>FISH],['resource-objects',()=>OBJS],['collectible-spawn-zones',()=>SZ],['puzzle-locations',()=>PUZ],['environment-assets',()=>buildData().environmentAssets],['animation-data',()=>buildData().animations]];
+$('#xd').innerHTML=XD.map(d=>`<option>${d[0]}</option>`).join('');
+const LX={terrain:['ocean-background','terrain-base','terrain-transitions'],water:['water-details'],decor:['ground-decoration','paths-and-farmland'],res:['resource-objects'],land:['landmarks'],fore:['foreground-canopies']};
+document.querySelectorAll('[data-x]').forEach(b=>b.onclick=async()=>{const k=b.dataset.x,s=+$('#xs').value,st=S.st,o={ov:S.ov,noFx:true};
+if(k==='svg')return saveFile('island-map.svg',renderMap(st,Object.assign({s:1},o)));if(k==='png')return saveFile('island-map.png',await png(renderMap(st,Object.assign({s},o)),1280*s,1024*s));
+if(k==='lsvg'||k==='lpng'){const l=$('#xl').value,only=l==='water'?['water-details']:LX[l],svg=renderMap(st,Object.assign({s:k==='lsvg'?1:s,only},o)),n={terrain:'terrain',water:'water',decor:'ground-decorations',res:'resource-objects',land:'landmarks',fore:'foreground'}[l]+'-layer';return k==='lsvg'?saveFile(n+'.svg',svg):saveFile(n+'.png',await png(svg,1280*s,1024*s))}
+if(k==='tset'){const n=Object.keys(TL),cw=8,rows=Math.ceil(n.length/cw),svg=z=>`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${cw*16} ${rows*16}" width="${cw*16*z}" height="${rows*16*z}" shape-rendering="crispEdges">${n.map((k,i)=>`<g transform="translate(${i%cw*16} ${(i/cw|0)*16})">${runs(TL[k],16,16)}</g>`).join('')}</svg>`;saveFile('terrain-tileset.svg',svg(1));saveFile('terrain-tileset.png',await png(svg(s),cw*16*s,rows*16*s));return saveFile('terrain-tileset.json',JSON.stringify(n.map((k,i)=>({id:k,x:i%cw*16,y:(i/cw|0)*16,w:16,h:16})),null,1))}
+if(k==='atlas'){const L=Object.values(AS).filter(a=>a.cat!=='Animations'),AW=512;let x=0,y=0,rh=0;const meta=[],g=L.map(a=>{if(x+a.w>AW){x=0;y+=rh+1;rh=0}const r={id:a.id,x,y,w:a.w,h:a.h,groundAnchor:{x:a.w/2,y:a.h},collisionFootprintTiles:a.fp};meta.push(r);const s=`<g transform="translate(${x} ${y})">${runs(a.m,a.w,a.h)}</g>`;x+=a.w+1;rh=Math.max(rh,a.h);return s}).join(''),H2=y+rh,svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${AW} ${H2}" width="${AW*s}" height="${H2*s}" shape-rendering="crispEdges">${g}</svg>`;saveFile('environment-atlas.png',await png(svg,AW*s,H2*s));return saveFile('environment-atlas.json',JSON.stringify({image:'environment-atlas.png',scale:s,sprites:meta},null,1))}
+if(k==='json'){const d=XD.find(q=>q[0]===$('#xd').value);return saveFile(d[0]+'.json',JSON.stringify(d[1](),null,1))}
+if(k==='all')return saveFile('island-combined-map-data.json',JSON.stringify(buildData(),null,1))});
+/* ---------- init ---------- */
+drawMap();fit();window.addEventListener('resize',fit);
+</script></body></html>

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Resource &amp; Food Studio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#f3ecdc;--pn:#fffaf0;--ink:#3b2a22;--mut:#7d6a58;--ac:#5f8a4f;--ln:#d9ccb0;--c1:#e9dfc8;--c2:#f6efdf;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1f1b16;--pn:#2b251e;--ink:#f1e8d4;--mut:#b3a58f;--ac:#8fbf7a;--ln:#463d31;--c1:#3a3228;--c2:#332c23}}
+:root[data-theme="dark"]{--bg:#1f1b16;--pn:#2b251e;--ink:#f1e8d4;--mut:#b3a58f;--ac:#8fbf7a;--ln:#463d31;--c1:#3a3228;--c2:#332c23}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,sans-serif}
+header{padding:12px 16px 0;max-width:1400px;margin:auto}h1{margin:0;font-size:20px}header p{margin:2px 0 0;color:var(--mut)}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:12px;padding:12px;max-width:1400px;margin:auto}
+.card{background:var(--pn);border:1px solid var(--ln);border-radius:10px;padding:10px;min-width:0}.wide{grid-column:1/-1}h2{margin:0 0 6px;font-size:14px}
+select,input,button{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--ln);border-radius:6px;padding:3px 8px;max-width:100%}button{cursor:pointer}button:hover{border-color:var(--ac)}button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0}.chk{display:inline-flex;gap:3px;align-items:center;font-size:13px;margin-right:6px}.chk input{width:auto}
+.checker{background:repeating-conic-gradient(var(--c1) 0 25%,var(--c2) 0 50%) 0 0/16px 16px}.lightbg{background:#f4f0e0}.darkbg{background:#2a2420}
+.pv{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;padding:10px;border-radius:8px;overflow:auto}.pv figure{margin:0;text-align:center;font-size:11px;color:var(--mut);position:relative}svg{display:block}
+.grid{display:flex;flex-wrap:wrap;gap:8px}.cell{text-align:center;font-size:11px;color:var(--mut);background:var(--bg);border:1px solid var(--ln);border-radius:8px;padding:4px;cursor:pointer;width:84px}.cell.sel{border-color:var(--ac);background:var(--c1)}.cell>div{display:flex;justify-content:center;padding:2px;border-radius:4px;min-height:48px;align-items:center}.cell b{display:block;color:var(--ink);font-size:11px;line-height:1.15}
+table{border-collapse:collapse;width:100%;font-size:12px}td{border-bottom:1px solid var(--ln);padding:2px 4px;vertical-align:top}td:first-child{color:var(--mut);white-space:nowrap}
+pre{background:var(--bg);border:1px solid var(--ln);border-radius:6px;padding:6px;font-size:11px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin:4px 0}
+.src{border:2px solid var(--ac);border-radius:8px;padding:8px;font-size:13px}.src.pl{border-color:#c8a030}.badge{display:inline-block;padding:0 8px;border-radius:9px;font-size:11px;color:#fff;background:var(--ac)}.badge.pl{background:#c8a030}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:6px 14px;border-radius:20px;opacity:0;transition:.3s;pointer-events:none}
+</style></head><body>
+<header><h1>🧺 Resource &amp; Food Studio</h1><p>One resource per world source · 20 assets · 16×16 items, 32×32 storage · linked to Island Map &amp; Building Studio objects</p></header>
+<main>
+<section class="card wide"><h2>Resource Gallery</h2><div class="row"><select id="f1"></select><select id="f2"><option value="all">Food + material</option><option value="food">Food only</option><option value="material">Material only</option></select><select id="f3"></select><span id="cnt" style="color:var(--mut)"></span></div><div class="grid" id="gal"></div></section>
+<section class="card"><h2>Main Preview</h2><div class="row"><label class="chk"><input type="checkbox" id="hl">Highlighted</label><label class="chk"><input type="checkbox" id="inv">Inventory slot (collected)</label><label class="chk"><input type="checkbox" id="grid">Grid</label><select id="bg"><option value="checker">Checkerboard</option><option value="light">Light</option><option value="dark">Dark</option></select></div><div class="pv checker" id="pv"></div></section>
+<section class="card"><h2>Source Mapping</h2><div class="src" id="src"></div></section>
+<section class="card"><h2>Inspector</h2><table id="insp"></table><div class="row"><button id="cpj">Copy JSON</button></div><pre id="json"></pre></section>
+<section class="card"><h2>Storage Preview</h2><div class="pv checker" id="stor"></div><p style="color:var(--mut);font-size:12px;margin:4px 0">Support visuals for the Food Storage building and UI. Normal state only.</p></section>
+<section class="card"><h2>Export</h2><label class="chk">Scale <select id="xs"><option>1</option><option>2</option><option selected>4</option></select></label><div class="row"><button data-x="svg">Selected SVG</button><button data-x="png">Selected PNG</button><button data-x="smeta">Selected metadata JSON</button></div><div class="row"><button data-x="atpng">Atlas PNG</button><button data-x="atsvg">Atlas SVG</button><button data-x="atjson">Atlas JSON</button><button data-x="meta">All metadata JSON</button></div><p style="color:var(--mut);font-size:12px">Atlas 128×64: row 1 R01–R08, row 2 R09–R13 + F01–F03 (16×16 cells), then S01–S04 (32×32 cells). No padding, labels or background.</p></section>
+<section class="card wide"><h2>Atlas Preview</h2><div class="pv checker" id="atl"></div></section>
+</main><div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const OUT='#3b2a22',RK=['#b8b2a4','#9a9488','#78726a'],G3=['#9bbd74','#73965B','#5f8250'],TRK=['#8a5a34','#6b4a30'];
+/* ---------- pixel toolkit (same style as previous studios: integer grid, auto 1px outline) ---------- */
+function Sp(w,h,fn,ol=1){const m=new Map(),P=(x,y,c)=>{x=Math.floor(x);y=Math.floor(y);if(c&&x>=0&&y>=0&&x<w&&y<h)m.set(y*w+x,c)},R=(x,y,a,b,c)=>{for(let j=0;j<b;j++)for(let i=0;i<a;i++)P(x+i,y+j,c)},G=f=>{for(let y=0;y<h;y++)for(let x=0;x<w;x++){const c=f(x+.5,y+.5);if(c)P(x,y,c)}},
+B=(cx,cy,rx,ry,cs)=>G((x,y)=>{const u=(x-cx)/rx,v=(y-cy)/ry;if(u*u+v*v>1)return;const t=u+v;return t<-.5?cs[0]:t<.4?cs[1]:cs[2]}),
+L=(x0,y0,x1,y1,c)=>{const n=Math.max(Math.abs(x1-x0),Math.abs(y1-y0),1);for(let i=0;i<=n;i++)P(Math.round(x0+(x1-x0)*i/n),Math.round(y0+(y1-y0)*i/n),c)},
+RC=(f,c)=>m.forEach((v,k)=>{if(f(k%w,(k/w)|0,v))m.set(k,c)});fn({P,R,B,G,L,RC,m,w,h});
+if(ol){const o=[];m.forEach((c,k)=>{const x=k%w,y=(k/w)|0;[[1,0],[-1,0],[0,1],[0,-1]].forEach(([a,b])=>{const X=x+a,Y=y+b;if(X>=0&&Y>=0&&X<w&&Y<h&&!m.has(Y*w+X))o.push(Y*w+X)})});o.forEach(k=>m.set(k,OUT))}return{w,h,m}}
+function runs(m,w,h){const g={};for(let y=0;y<h;y++){let x=0;while(x<w){const c=m.get(y*w+x);if(!c){x++;continue}let n=1;while(x+n<w&&m.get(y*w+x+n)===c)n++;g[c]=(g[c]||'')+`M${x} ${y}h${n}v1h-${n}z`;x+=n}}return Object.entries(g).map(([c,d])=>`<path fill="${c}" d="${d}"/>`).join('')}
+/* ---------- artwork: colors reuse the island map's own assets (berry bush, log, rocks, herbs, mushroom, coconut, crops) ---------- */
+const BERRY=['#e8806a','#c8503c','#8a2e28'];
+const fish=(c,len,tail)=>({B,P,R,L,RC,w})=>{B(7.5,8,len,3.2,c);tail.forEach(([x,y])=>P(x,y,c[2]))};
+const ART={
+berries:({B,P,R,L})=>{B(6,9,2.7,2.7,BERRY);B(10.5,9.5,2.7,2.7,BERRY);B(8,6,2.7,2.7,BERRY);B(9.5,12.5,2.2,2,BERRY);L(8,4,8,3,'#4a7d48');R(7,2,4,2,'#5f9a58');P(6,3,'#80a064')},
+wood_log:({R,B,P,L})=>{R(3,5,11,7,TRK[0]);R(3,5,11,2,'#a87848');R(3,10,11,2,TRK[1]);L(7,8,12,8,TRK[1]);R(13,6,1,5,TRK[1]);B(4,8.5,2.6,3.6,['#e8c898','#d8b47a','#b88a56']);P(4,8,'#a07a50');P(4,9,'#a07a50')},
+stone:({B,P,L})=>{B(8,9,5.6,4.6,RK);P(6,6,'#d0cac0');P(7,6,'#d0cac0');L(9,7,10,11,RK[2]);P(10,12,RK[2])},
+herb:({B,P,R,L})=>{R(7,10,3,4,'#4a7d48');[[5,5,'#5f9a58'],[8,4,'#9bbd74'],[11,5,'#5f9a58']].forEach(([x,y,c])=>{B(x,y,1.9,2.6,[c,c,'#4a7d48']);L(8,10,x,y+1,'#4a7d48')});R(6,11,5,1,'#c8a458')},
+mushroom:({B,P,R})=>{R(6,9,4,4,'#e8e0c8');R(9,9,1,4,'#c8c0a8');B(8,7,5.2,3.6,['#e8705a','#c8503c','#8a2e28']);P(6,6,'#fff');P(9,5,'#fff');P(10,7,'#fff');P(7,8,'#fff')},
+coconut:({B,P})=>{B(8,8.5,5.3,5,['#a07a50','#7a5430','#4a3220']);P(7,6,'#2a1a10');P(9,6,'#2a1a10');P(8,8,'#2a1a10');P(5,9,'#b89060');P(6,11,'#b89060')},
+fish_small:({B,P,R})=>{B(7,8,4.6,3,['#b8d8e8','#8ab8d0','#5a88a8']);[[11,8],[12,7],[12,8],[12,9],[13,6],[13,7],[13,9],[13,10]].forEach(([x,y])=>P(x,y,'#5a88a8'));R(5,9,5,1,'#e8f4f8');P(4,7,'#1a1a2a');P(7,5,'#5a88a8');P(8,5,'#5a88a8')},
+fish_large:({B,P,R,RC})=>{B(7.5,8,5.8,3.7,['#9ec68a','#6f9a6a','#456a48']);RC((x,y,c)=>[6,9,11].includes(x)&&c==='#6f9a6a','#456a48');[[13,8],[14,7],[14,8],[14,9],[14,6],[14,10]].forEach(([x,y])=>P(x,y,'#456a48'));R(5,10,7,1,'#f0a060');P(3,7,'#1a1a2a');P(7,4,'#c8503c');P(8,4,'#c8503c');P(10,12,'#c8503c')},
+carrot:({G,P,L})=>{G((x,y)=>{if(y<5||y>14)return;const hw=(14-y)*.3+.3;if(Math.abs(x-8)>hw)return;return y===8||y===11?'#c06020':x>8+hw*.3?'#c46a22':'#e0802a'});L(8,5,6,2,'#6f9a4f');L(8,5,8,1,'#80a064');L(8,5,10,2,'#6f9a4f')},
+corn:({B,P,R,RC})=>{B(5.5,10,1.9,4.2,['#80a064','#6f9a4f','#4a7d48']);B(10.5,10,1.9,4.2,['#80a064','#6f9a4f','#4a7d48']);B(8,7.5,3,5.2,['#f8dc78','#e8c25a','#b8942a']);RC((x,y,c)=>(x+y)%2===0&&c==='#e8c25a','#d8aa40');P(8,2,'#c8a458');P(8,3,'#c8a458')},
+potato:({B,P,R})=>{B(8,9,5.6,4.2,['#d8b078','#b8935a','#8a6a40']);R(11,6,2,2,'#b8935a');[[6,8],[10,10],[8,11],[11,8],[5,10]].forEach(([x,y])=>P(x,y,'#6b4a30'))},
+cabbage:({B,P,L})=>{B(8,8.5,5.6,5.2,['#c8e0a8','#9bc47a','#6f9a4f']);L(8,4,8,13,'#6f9a4f');L(8,8,4,10,'#e0f0c8');L(8,8,12,10,'#e0f0c8');L(8,6,6,6,'#e0f0c8')},
+tomato:({B,P,R})=>{B(8,9,5.3,4.7,['#e87868','#d04a4a','#9a2e32']);R(6,4,5,1,'#5f9a58');P(8,3,'#4a7d48');P(5,5,'#5f9a58');P(11,5,'#5f9a58');P(6,7,'#f8b0a0');P(6,8,'#f8b0a0')},
+cooked_fish:({B,P,L,R})=>{B(7,8,4.9,3.1,['#f0c070','#d89040','#a86020']);[[11,8],[12,7],[12,8],[12,9],[13,6],[13,10]].forEach(([x,y])=>P(x,y,'#a86020'));L(5,6,8,10,'#6b3a10');L(8,6,11,10,'#6b3a10');P(4,7,'#3b2a22');P(9,5,'#6f9a4f');P(10,5,'#6f9a4f')},
+veg_soup:({B,P,R,G})=>{G((x,y)=>{if(y<7)return;const u=(x-8)/6,v=(y-7)/6.2;if(u*u+v*v>1)return;return v>.55?'#6b4a30':u+v<.1?'#c8985a':'#a87848'});B(8,7,5.3,1.7,['#f0a050','#e88a30','#c86a20']);P(6,7,'#6f9a4f');P(10,7,'#6f9a4f');P(8,6,'#e0802a');P(9,7,'#e0802a');P(6,2,'#e8e4da');P(7,3,'#e8e4da');P(10,2,'#e8e4da');P(9,3,'#e8e4da')},
+fruit_mix:({B,P,R,G})=>{G((x,y)=>{if(y<8)return;const u=(x-8)/6,v=(y-8)/5.2;if(u*u+v*v>1)return;return v>.55?'#6b4a30':u+v<.1?'#c8985a':'#a87848'});B(6,6.5,2,2,BERRY);B(10,6.5,2,2,BERRY);B(8,5,2,2,['#b890e0','#8a60c0','#5a3a8a']);R(7,3,2,1,'#fff');R(11,4,3,1,'#fff4b0');P(5,9,'#f4f0e0')}};
+/* storage (32x32) */
+const wick=(c,f)=>({G,R,P,L})=>{f({G,R,P,L,pre:1});G((x,y)=>{if(y<15||y>29)return;const hw=11.5+(y-15)*.12;if(Math.abs(x-16)>hw)return;return(Math.floor(y/2)+Math.floor(x/3))%2?'#c8985a':'#a87848'});R(4,14,24,3,'#b88a56');R(4,14,24,1,'#d8b47a');R(4,16,24,1,'#8a6a45');f({G,R,P,L,pre:0})};
+const handle=({L})=>{L(7,13,9,6,'#8a6a45');L(9,6,23,6,'#8a6a45');L(23,6,25,13,'#8a6a45')};
+const ART2={
+berry_basket:wick(0,({G,B,P,L,pre})=>{}),
+};
+function basket(top){return({G,R,P,L,B})=>{G((x,y)=>{if(y<15||y>29)return;const hw=11.5+(y-15)*.12;if(Math.abs(x-16)>hw)return;return(Math.floor(y/2)+Math.floor(x/3))%2?'#c8985a':'#a87848'});R(4,14,24,3,'#b88a56');R(4,14,24,1,'#d8b47a');R(4,16,24,1,'#8a6a45');top({G,R,P,L,B})}}
+const ART32={
+berry_basket:basket(({B,P,L,R})=>{[[9,12],[14,10],[19,12],[12,8],[17,8],[22,11],[15,13]].forEach(([x,y])=>B(x,y,3,3,BERRY));[[13,5],[18,6]].forEach(([x,y])=>R(x,y,3,2,'#5f9a58'))}),
+fish_basket:basket(({B,P,L,R})=>{[[8,6,'#8ab8d0'],[15,4,'#6f9a6a'],[21,7,'#8ab8d0']].forEach(([x,y,c])=>{B(x+2,y+4,3.2,6,[c,c,'#456a48']);R(x+1,y+1,3,2,'#456a48');P(x+1,y+7,'#1a1a2a')});R(11,12,10,2,'#e8f4f8')}),
+veg_basket:basket(({B,P,L,R})=>{[9,13].forEach(x=>{L(x,12,x,4,'#6f9a4f');L(x+1,12,x+3,5,'#80a064')});B(8,12,2.2,3,['#f0902a','#e0802a','#c06020']);B(20,10,3.2,3.5,['#e87868','#d04a4a','#9a2e32']);B(15,9,2.2,5,['#f8dc78','#e8c25a','#b8942a']);B(24,13,2.6,2.2,['#d8b078','#b8935a','#8a6a40']);R(18,6,5,1,'#5f9a58')}),
+food_crate:({R,P,L})=>{R(3,9,26,19,'#a87848');R(2,7,28,4,'#c8985a');R(2,7,28,1,'#e8b878');R(3,15,26,1,'#6b4a30');R(3,22,26,1,'#6b4a30');R(3,9,3,19,'#8a5a34');R(26,9,3,19,'#8a5a34');R(11,13,10,7,'#e8e0c8');R(15,14,2,5,'#5f9a58');R(13,16,2,1,'#80a064');R(17,16,2,1,'#80a064');R(9,26,3,2,TRK[1]);R(20,26,3,2,TRK[1])}};
+/* ---------- metadata ---------- */
+const SRC={
+berry_bush:{obj:'berry_bush',mapAssets:['berry_bush_full','berry_bush_partial','berry_bush_empty','berry_bush_regrowing'],st:'exists',studio:'Island Map Studio',note:'The map has ONE berry bush type (7 placed bushes, 4 visual states). Berries use the exact bush berry colors, so the item reads as "from that bush".'},
+tree:{obj:'tree',mapAssets:['tree_1…tree_6','tree_harvestable','tree_stump'],st:'exists',studio:'Island Map Studio',note:'Six tree looks all yield the same single wood resource (map resource type "wood"). The log copies the map\'s log colors.'},
+rock:{obj:'harvestable_rock',mapAssets:['rock_deposit','stone_large'],st:'exists',studio:'Island Map Studio',note:'Harvestable rock deposits (map resource type "stone"). One gray chunk using the map rock palette.'},
+herb:{obj:'herb',mapAssets:['herb_1','herb_2','herb_3'],st:'exists',studio:'Island Map Studio',note:'The map has 3 herb looks in forest zones (resource type "herb"). They share ONE herb item.'},
+mushroom:{obj:'mushroom',mapAssets:['mushroom_1','mushroom_2','mushroom_3'],st:'exists',studio:'Island Map Studio',note:'Forest mushrooms (resource type "mushroom"). One mushroom item, red cap like mushroom_1.'},
+palm:{obj:'palm_tree',mapAssets:['palm_1','palm_2','palm_3','coconut'],st:'exists',studio:'Island Map Studio',note:'Beach palms carry resource type "coconut" and the map also scatters coconut ground items.'},
+lake:{obj:'fishing_spot',mapAssets:['lake_fishing_001…006','ocean_fishing_001…004'],st:'exists',studio:'Island Map Studio',note:'Lake and ocean fishing spots (stand tile + water target). Yields the small fish.',waterBodies:['lake_001','ocean_001']},
+river:{obj:'fishing_spot',mapAssets:['river_fishing_001…004'],st:'exists',studio:'Island Map Studio',note:'River fishing spots. Second fish type kept for variety between water bodies; remove if you want only one fish.',waterBodies:['river_001']},
+farm:{obj:'crop',mapAssets:['crop_<type>_3 (mature)'],st:'exists',studio:'Island Map Studio',note:'The map\'s farm_zone_001 defines exactly these five crops with a mature stage. The item matches each mature crop.'},
+storage:{obj:'food_storage',mapAssets:[],st:'planned',studio:'Building Studio',note:'Support visuals for the Food Storage building and UI feedback. Not placed on the map.'},
+cook:{obj:'campfire',mapAssets:[],st:'planned',studio:'Building Studio',note:'Simple prepared food from the campfire. Cooking is only a planned mechanic, so this is optional.'}};
+const mk=(id,disp,name,cat,origin,type,srcKey,art,size,uses,stack,store,desc,extra)=>({id,displayId:disp,name,category:cat,origin,sourceObject:SRC[srcKey].obj,sourceKey:srcKey,assetId:art+'_normal',art,spriteSize:{width:size,height:size},resourceType:type,stackable:stack,storable:store,uses,description:desc,...extra});
+const ITEMS=[
+mk('resource_berries','R01','Berries','gathered_food','gathered','food','berry_bush','berries',16,['eat','store','cook'],1,1,'Fresh berries gathered from the village berry bushes.'),
+mk('resource_wood_log','R02','Wood Log','gathered_material','gathered','material','tree','wood_log',16,['build','craft','fuel'],1,1,'A sturdy log chopped from the island trees.'),
+mk('resource_stone','R03','Stone','gathered_material','gathered','material','rock','stone',16,['build','craft'],1,1,'A rough gray stone broken from a rock deposit.'),
+mk('resource_herb','R04','Herb','gathered_medicinal','gathered','material','herb','herb',16,['heal'],1,1,'A small bundle of healing herbs.'),
+mk('resource_mushroom','R05','Mushroom','gathered_food','gathered','food','mushroom','mushroom',16,['eat','store','heal'],1,1,'A forest mushroom with a cheerful red cap.'),
+mk('resource_coconut','R06','Coconut','gathered_food','gathered','food','palm','coconut',16,['eat','store'],1,1,'A coconut that fell from a beach palm.'),
+mk('resource_fish_small','R07','Small Fish','fished_food','fished','food','lake','fish_small',16,['eat','store','cook'],1,1,'A little fish caught from the lake or shore.'),
+mk('resource_fish_large','R08','River Fish','fished_food','fished','food','river','fish_large',16,['eat','store','cook'],1,1,'A plump river fish with a stripy back.'),
+mk('resource_carrot','R09','Carrot','farmed_food','farmed','food','farm','carrot',16,['eat','store','cook','plant'],1,1,'A crunchy carrot from the village fields.'),
+mk('resource_corn','R10','Corn','farmed_food','farmed','food','farm','corn',16,['eat','store','cook','plant'],1,1,'A golden cob of corn.'),
+mk('resource_potato','R11','Potato','farmed_food','farmed','food','farm','potato',16,['eat','store','cook','plant'],1,1,'A lumpy potato fresh from the soil.'),
+mk('resource_cabbage','R12','Cabbage','farmed_food','farmed','food','farm','cabbage',16,['eat','store','cook','plant'],1,1,'A leafy green cabbage.'),
+mk('resource_tomato','R13','Tomato','farmed_food','farmed','food','farm','tomato',16,['eat','store','cook','plant'],1,1,'A ripe red tomato.'),
+mk('storage_berry_basket','S01','Berry Basket','storage','stored','storage_support','storage','berry_basket',32,['display_storage'],0,0,'A woven basket piled with berries.',{states:['normal']}),
+mk('storage_fish_basket','S02','Fish Basket','storage','stored','storage_support','storage','fish_basket',32,['display_storage'],0,0,'A basket holding the day\'s catch.',{states:['normal']}),
+mk('storage_veg_basket','S03','Vegetable Basket','storage','stored','storage_support','storage','veg_basket',32,['display_storage'],0,0,'A mixed basket of harvested crops.',{states:['normal']}),
+mk('storage_food_crate','S04','Food Crate','storage','stored','storage_support','storage','food_crate',32,['display_storage'],0,0,'A simple wooden crate for the food store.',{states:['normal']}),
+mk('food_cooked_fish','F01','Cooked Fish','prepared_food','prepared','food','cook','cooked_fish',16,['eat','store'],1,1,'A fish grilled over the village campfire.'),
+mk('food_vegetable_soup','F02','Vegetable Soup','prepared_food','prepared','food','cook','veg_soup',16,['eat'],1,0,'A warm bowl of simple vegetable soup.'),
+mk('food_berry_mix','F03','Berry Mix','prepared_food','prepared','food','cook','fruit_mix',16,['eat'],1,0,'Berries and coconut slices in a little bowl.')];
+const SPR={};ITEMS.forEach(it=>{const big=it.spriteSize.width===32;SPR[it.id]=Sp(big?32:16,big?32:16,big?ART32[it.art]:ART[it.art])});
+ITEMS.forEach(it=>{if(!it.states)it.states=['normal','highlighted','collected'];it.assetIds={normal:it.assetId,highlighted:it.art+'_highlighted',collected:it.art+'_collected'};if(it.states.length===1)it.assetIds={normal:it.assetId};it.source={object:SRC[it.sourceKey].obj,existsInEnvironmentPlan:SRC[it.sourceKey].st==='exists',status:SRC[it.sourceKey].st,studio:SRC[it.sourceKey].studio,mapAssetIds:SRC[it.sourceKey].mapAssets,note:SRC[it.sourceKey].note}});
+const byId=id=>ITEMS.find(i=>i.id===id);
+/* ---------- rendering ---------- */
+const svgOf=(w,h,layers,z)=>`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w*z}" height="${h*z}" shape-rendering="crispEdges">${layers.map(([c,m])=>`<g class="${c}">${runs(m,w,h)}</g>`).join('')}</svg>`;
+const rim=s=>{const m=new Map();s.m.forEach((c,k)=>{const x=k%s.w,y=(k/s.w)|0;[[1,0],[-1,0],[0,1],[0,-1]].forEach(([a,b])=>{const X=x+a,Y=y+b;if(X>=0&&Y>=0&&X<s.w&&Y<s.h&&!s.m.has(Y*s.w+X))m.set(Y*s.w+X,'#fff4b0')})});m.set(1*s.w+1,'#fff');m.set(1*s.w+s.w-2,'#fff');return m};
+function renderResourceSVG(id,z,o={}){const s=SPR[id],L=[['sprite',s.m]];if(o.hl)L.push(['highlight',rim(s)]);return svgOf(s.w,s.h,L,z)}
+function renderInventorySlot(id,z){const s=SPR[id],n=s.w+4,m=new Map();for(let y=0;y<n;y++)for(let x=0;x<n;x++)m.set(y*n+x,(x===0||y===0||x===n-1||y===n-1)?'#6a5440':(x===1||y===1)?'#2a201a':'#3a2e26');s.m.forEach((c,k)=>m.set(((k/s.w|0)+2)*n+(k%s.w)+2,c));return svgOf(n,n,[['slot',m]],z)}
+/* atlas: single source of truth for layout + metadata */
+function atlasLayout(){const L=[];ITEMS.filter(i=>i.spriteSize.width===16).forEach((it,i)=>L.push({it,x:(i%8)*16,y:(i/8|0)*16,w:16,h:16}));ITEMS.filter(i=>i.spriteSize.width===32).forEach((it,i)=>L.push({it,x:i*32,y:32,w:32,h:32}));return{w:128,h:64,cells:L}}
+function atlasSVG(z){const A=atlasLayout();return`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${A.w} ${A.h}" width="${A.w*z}" height="${A.h*z}" shape-rendering="crispEdges">${A.cells.map(c=>`<g transform="translate(${c.x} ${c.y})">${runs(SPR[c.it.id].m,c.w,c.h)}</g>`).join('')}</svg>`}
+const atlasJSON=()=>{const A=atlasLayout();return{image:'resources-atlas.png',size:{width:A.w,height:A.h},sprites:A.cells.map(c=>({id:c.it.id,displayId:c.it.displayId,assetId:c.it.assetId,source:{x:c.x,y:c.y,width:c.w,height:c.h},anchor:{x:c.w/2,y:c.h-2,type:'bottom-center'}}))}};
+/* ---------- UI ---------- */
+const S={sel:'resource_berries',hl:0,inv:0,grid:0,bg:'checker',f1:'all',f2:'all',f3:'all'};const tt=m=>{const t=$('#toast');t.textContent=m;t.style.opacity=1;clearTimeout(tt.h);tt.h=setTimeout(()=>t.style.opacity=0,1800)};
+$('#f1').innerHTML='<option value="all">All categories</option>'+[...new Set(ITEMS.map(i=>i.category))].map(c=>`<option>${c}</option>`).join('');$('#f3').innerHTML='<option value="all">All origins</option>'+['gathered','farmed','fished','stored','prepared'].map(c=>`<option>${c}</option>`).join('');
+const filt=()=>ITEMS.filter(i=>(S.f1==='all'||i.category===S.f1)&&(S.f2==='all'||i.resourceType===S.f2)&&(S.f3==='all'||i.origin===S.f3));
+function gallery(){const L=filt();$('#cnt').textContent=L.length+' / '+ITEMS.length;$('#gal').innerHTML=L.map(i=>`<div class="cell ${i.id===S.sel?'sel':''}" data-id="${i.id}"><div class="checker">${renderResourceSVG(i.id,i.spriteSize.width===32?2:3)}</div><b>${esc(i.name)}</b>${i.displayId}</div>`).join('')}
+function preview(){const it=byId(S.sel),w=it.spriteSize.width;$('#pv').className='pv '+({checker:'checker',light:'lightbg',dark:'darkbg'}[S.bg]);const gr=z=>S.grid&&z>1?`<svg style="position:absolute;left:0;top:0" width="${w*z}" height="${w*z}" viewBox="0 0 ${w} ${w}"><path d="${[...Array(w+1).keys()].map(i=>`M${i} 0V${w}M0 ${i}H${w}`).join('')}" stroke="#fff" stroke-opacity=".4" stroke-width=".05"/></svg>`:'';
+$('#pv').innerHTML=(w===32?[1,2,4,8].filter(z=>z<=6):[1,2,4,8]).map(z=>`<figure>${S.inv&&it.states.length>1?renderInventorySlot(it.id,z):renderResourceSVG(it.id,z,{hl:S.hl&&it.states.length>1})}${S.inv?'':gr(z)}${z}×${z===1?' native':''}</figure>`).join('');
+const s=it.source;$('#src').className='src '+(s.status==='exists'?'':'pl');$('#src').innerHTML=`<b>${esc(it.name)} → comes from <code>${esc(s.object)}</code></b><br><span class="badge ${s.status==='exists'?'':'pl'}">${s.status==='exists'?'✔ exists in the environment plan':'◌ planned / support asset'}</span> <span style="color:var(--mut)">${esc(s.studio)}</span><p style="margin:6px 0 2px">${esc(s.note)}</p><div style="font-size:12px;color:var(--mut)">Source asset IDs: ${esc(s.mapAssetIds.join(', ')||'—')}</div>`;
+const rows=[['Resource ID',it.id],['Display ID',it.displayId],['Name',it.name],['Category',it.category],['Origin',it.origin],['Source object',it.sourceObject],['Resource type',it.resourceType],['Uses',it.uses.join(', ')],['Stackable / storable',it.stackable+' / '+it.storable],['Sprite size',w+'×'+w+' px'],['Asset IDs',Object.values(it.assetIds).join(', ')],['Description',it.description]];$('#insp').innerHTML=rows.map(r=>`<tr><td>${r[0]}</td><td>${esc(r[1])}</td></tr>`).join('');const j={...it};delete j.sourceKey;$('#json').textContent=JSON.stringify(j,null,1)}
+function storage(){$('#stor').innerHTML=ITEMS.filter(i=>i.category==='storage').map(i=>`<figure>${renderResourceSVG(i.id,4)}${i.displayId} ${esc(i.name)}</figure>`).join('')}
+function atlasPrev(){const A=atlasLayout();$('#atl').innerHTML=`<div style="position:relative">${atlasSVG(6)}<svg style="position:absolute;left:0;top:0" width="${A.w*6}" height="${A.h*6}" viewBox="0 0 ${A.w} ${A.h}">${A.cells.map(c=>`<rect data-id="${c.it.id}" x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" fill="${c.it.id===S.sel?'#fff4b0':'none'}" fill-opacity=".25" stroke="#fff" stroke-opacity=".35" stroke-width=".15" style="cursor:pointer"/>`).join('')}</svg></div>`}
+function refresh(){gallery();preview();storage();atlasPrev()}
+document.addEventListener('click',e=>{const c=e.target.closest('[data-id]');if(c){S.sel=c.dataset.id;refresh()}});
+$('#f1').onchange=e=>{S.f1=e.target.value;gallery()};$('#f2').onchange=e=>{S.f2=e.target.value;gallery()};$('#f3').onchange=e=>{S.f3=e.target.value;gallery()};
+$('#hl').onchange=e=>{S.hl=e.target.checked;preview()};$('#inv').onchange=e=>{S.inv=e.target.checked;preview()};$('#grid').onchange=e=>{S.grid=e.target.checked;preview()};$('#bg').onchange=e=>{S.bg=e.target.value;preview()};
+$('#cpj').onclick=async()=>{const t=$('#json').textContent;try{await navigator.clipboard.writeText(t)}catch(e){const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();try{document.execCommand('copy')}catch(_){}a.remove()}tt('Copied')};
+/* ---------- exports ---------- */
+async function saveFile(name,data){const d=window.claude&&await claude.use('downloads');if(d){try{await d.save({filename:name,data});return}catch(e){if(!e||e.code!=='declined')tt('Save failed');return}}const a=document.createElement('a');a.href=URL.createObjectURL(data instanceof Blob?data:new Blob([data]));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)}
+const png=(svg,w,h)=>new Promise(r=>{const i=new Image();i.onload=()=>{const k=document.createElement('canvas');k.width=w;k.height=h;const x=k.getContext('2d');x.imageSmoothingEnabled=false;x.drawImage(i,0,0,w,h);k.toBlob(r,'image/png')};i.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)});
+const clean=i=>{const j={...i};delete j.sourceKey;return j};
+const ALL=()=>({tileSize:16,counts:{total:ITEMS.length,gathered:6,fished:2,farmed:5,storage:4,prepared:3},futurePlaceholders:{hunting:'Wildlife and hunting are not designed yet. No meat or animal-product assets exist in this pack; add them later once a wildlife source object exists.'},resources:ITEMS.map(clean)});
+document.querySelectorAll('[data-x]').forEach(b=>b.onclick=async()=>{const k=b.dataset.x,z=+$('#xs').value,it=byId(S.sel),w=it.spriteSize.width;
+if(k==='svg')return saveFile(it.art+'.svg',renderResourceSVG(it.id,z));if(k==='png')return saveFile(it.art+'.png',await png(renderResourceSVG(it.id,z),w*z,w*z));
+if(k==='smeta')return saveFile(it.id+'.json',JSON.stringify(clean(it),null,1));if(k==='meta')return saveFile('resources-metadata.json',JSON.stringify(ALL(),null,1));
+if(k==='atsvg')return saveFile('resources-atlas.svg',atlasSVG(1));if(k==='atpng')return saveFile('resources-atlas.png',await png(atlasSVG(z),128*z,64*z));if(k==='atjson')return saveFile('resources-atlas.json',JSON.stringify(atlasJSON(),null,1))});
+refresh();
+</script></body></html>

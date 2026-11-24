@@ -1,0 +1,50 @@
+﻿:root { color-scheme: light; background: #3f7f9c; }
+[hidden] { display: none !important; }
+body { margin: 0; height: 100dvh; overflow: hidden; }
+main.gu { height: 100%; }
+canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; image-rendering: pixelated; }
+canvas.dragging { cursor: grabbing; }
+button, select { font: inherit; }
+h2, h3, p { margin: 0; }
+.row, .bottom { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bottom { position: absolute; left: 8px; bottom: 8px; }
+#controls { color: #fff5dc; background: #3b2a22e8; padding: 4px 7px; font-size: 12px; }
+.panel {
+  position: absolute;
+  right: 8px;
+  top: 112px;
+  width: min(30rem, calc(100% - 5rem));
+  max-height: calc(100% - 168px);
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.volume-control { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 8px 0; }
+.volume-control input { grid-column: 1 / -1; width: 100%; }
+.volume-control output { font-variant-numeric: tabular-nums; }
+.volume-control input:focus-visible { outline: 3px solid var(--c-gold); outline-offset: 2px; }
+.panel p { margin: 5px 0; }
+.panel img { object-fit: contain; max-width: 100%; }
+.entries { display: grid; gap: 4px; margin: 6px 0; }
+.gu-btn.entry { justify-content: flex-start; }
+.portrait { width: 48px; height: 64px; }
+.thumb { width: 36px; height: 48px; }
+.building-preview { display: block; margin: 8px auto; max-height: 128px; }
+.debug { right: auto; top: auto; left: 8px; bottom: 48px; width: min(25rem, calc(100% - 16px)); }
+#overlays { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 5px; font-size: 12px; }
+#inspector { font-size: 11px; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gu-sel { bottom: 52px; width: min(360px, 65%); }
+.gu-sel:empty, .gu-toasts:empty { display: none; }
+.gu-toasts { z-index: 8; top: auto; bottom: 54px; }
+.gu-paused { top: auto; bottom: 8px; }
+#title-screen .gu-modal > * { pointer-events: auto; }
+#panel.collection .gu-grid { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; }
+#panel.collection .gu-slot { max-width: 100%; }
+@media (max-width: 680px) {
+  .gu-top { flex-wrap: wrap; }
+  .gu-top > .gu-grow { display: none; }
+  .gu-nav { top: 144px; }
+  .panel { top: 142px; max-height: calc(100% - 197px); }
+  .debug { top: auto; }
+  #controls { display: none; }
+}
