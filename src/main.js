@@ -10,36 +10,68 @@ import { screenToWorld, tileToWorld, worldToScreen, worldToTile } from './geomet
 import { clampZoom, createCameraController } from './camera-controls.js';
 import { createRenderer, svgUrl } from './render.js';
 import { createUI } from './ui.js';
-import { createWorld, enableWildlifeDirector, previewPlacement, updateWorld } from './world.js';
+import { createWorld, enableWildlifeDirector, previewPlacement, updateIslandPreview, updateWorld } from './world.js';
 import { cameraWorldRect } from './wildlife-director.js';
 import { startGameplay } from './gameplay.js';
 import { landmarks } from './progression.js';
-import { advanceOffline, readVillage, restoreVillage, saveVillage } from './save.js';
+import { advanceOffline, createIslandSaves, restoreVillage } from './save.js';
 import { runDevAction } from './dev-tools.js';
+import { createMainMenu } from './main-menu.js';
+import { createMenuSounds, loadPreferences, storePreferences } from './preferences.js';
+import { lerp, smooth } from './climate.js';
 
 const assets = createAssets({ island, character, building, collectible, resource, wildlife, ui: studioUI });
 const world = createWorld(assets);
 let storage;
 try { storage = window.localStorage; } catch { /* Continue without persistence. */ }
-const savedVillage = readVillage(storage);
-const restored = restoreVillage(world, savedVillage);
-const gameplay = startGameplay(world);
-const offline = restored ? advanceOffline(world, savedVillage.savedAt) : 0;
+const pristine = structuredClone(world.state);
+const saves = createIslandSaves(storage, world);
+const settings = loadPreferences(storage);
+const sound = createMenuSounds(settings);
+const fullscreenSupported = document.fullscreenEnabled && Boolean(document.documentElement.requestFullscreen);
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let gameplay;
+let wildlifeDirector;
+let activeSlot;
 let hiddenAt = null;
-let replacingVillage = false;
+let entry;
+let scenicTime = 0;
+let returnCamera;
+const app = document.querySelector('main');
+const title = document.getElementById('title-screen');
+const hud = ['studio-hud', 'hud-windows', 'panel', 'debug-panel'].map(id => document.getElementById(id));
+hud.push(document.querySelector('.bottom'));
 const size = world.map.meta.tileSize;
 const canvas = document.getElementById('island');
 const dropHint = document.getElementById('drop-action');
 const dropIcon = dropHint.querySelector('img');
 const dropLabel = dropHint.querySelector('span');
 const camera = { x: 0, y: 0, zoom: 2 };
+const renderCamera = { ...camera };
 const cameraController = createCameraController(camera);
+const devOnEntry = new URLSearchParams(location.search).get('debug') === '1';
 const view = {
-  selectedVillager: null, selectedObject: null, debug: new URLSearchParams(location.search).get('debug') === '1',
+  selectedVillager: null, selectedObject: null, debug: false, mode: 'menu', settings,
   overlays: new Set(), placementType: null, placement: null, drag: null,
 };
-const renderer = createRenderer(canvas, world, camera, view);
+const renderer = createRenderer(canvas, world, renderCamera, view);
 const center = () => ({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 });
+const villageCenter = tileToWorld(world.map.villagerSpawns[2], size);
+let viewportCenter = center();
+
+function syncRenderCamera() {
+  if (!settings.integer || view.mode === 'entering') {
+    Object.assign(renderCamera, camera);
+    return;
+  }
+  const screen = center();
+  const point = screenToWorld(screen, camera);
+  const scale = window.devicePixelRatio || 1;
+  const zoom = Math.max(1, Math.round(camera.zoom * scale)) / scale;
+  renderCamera.x = Math.round((screen.x - point.x * zoom) * scale) / scale;
+  renderCamera.y = Math.round((screen.y - point.y * zoom) * scale) / scale;
+  renderCamera.zoom = zoom;
+}
 
 function centerOn(position) {
   const screen = center();
@@ -48,13 +80,24 @@ function centerOn(position) {
   cameraController.syncFromCamera();
 }
 
+window.addEventListener('resize', () => {
+  const resized = center();
+  if (view.mode === 'playing') {
+    camera.x += resized.x - viewportCenter.x;
+    camera.y += resized.y - viewportCenter.y;
+    cameraController.syncFromCamera();
+    syncRenderCamera();
+  }
+  viewportCenter = resized;
+});
+
 function selectedVillager() {
   return world.state.villagers.find(villager => villager.id === view.selectedVillager);
 }
 
 function resetCamera() {
   camera.zoom = canvas.clientWidth < 580 ? 1 : 2;
-  centerOn(tileToWorld(world.map.villagerSpawns[2], size));
+  centerOn(villageCenter);
 }
 
 function adjustZoom(direction, point = center()) {
@@ -76,33 +119,182 @@ function selectVillager(id) {
 
 const ui = createUI(world, view, {
   selectVillager, resetCamera, adjustZoom, fitCamera,
-  save: () => saveVillage(world, storage),
-  lastSave: () => readVillage(storage)?.savedAt,
-  reload: () => window.location.reload(),
-  resetVillage: () => {
-    if (!window.confirm('Replace this saved village with a new one?')) return;
-    const next = createWorld(assets);
-    if (saveVillage(next, storage)) {
-      replacingVillage = true;
-      window.location.reload();
-    }
-    else ui.notify('This browser could not start a new saved village.');
-  },
+  preferences: settings, fullscreenSupported, applyPreference, openTitle,
+  save: () => saveActive(),
+  lastSave: () => saves.read(activeSlot)?.savedAt,
   focusVillager: () => { if (selectedVillager()) centerOn(selectedVillager().position); },
 });
-gameplay.subscribe(ui.notify);
-if (offline >= 10) ui.notify('Your villagers continued their routines while you were away.');
-setInterval(() => { if (!document.hidden && !replacingVillage) saveVillage(world, storage); }, 5000);
-window.addEventListener('pagehide', () => { if (hiddenAt === null && !replacingVillage) saveVillage(world, storage); });
+const menu = createMainMenu(title, {
+  saves, preferences: settings, fullscreenSupported, applyPreference, enter: enterIsland, deleted: loadPreview,
+  sound, icon: assets.ui.GameUI.ic,
+});
+
+function setMode(next) {
+  view.mode = app.dataset.mode = next;
+  for (const layer of hud) layer.inert = next !== 'playing';
+  ui.syncMusic();
+}
+
+function saveActive(now = Date.now()) {
+  return view.mode === 'playing' && saves.write(activeSlot, world.state, now);
+}
+
+function replaceIsland(save) {
+  view.selectedVillager = view.selectedObject = view.placementType = view.placement = null;
+  view.overlays.clear();
+  restoreVillage(world, save ?? { state: structuredClone(pristine) });
+  gameplay = startGameplay(world);
+  gameplay.subscribe(ui.notify);
+  wildlifeDirector = enableWildlifeDirector(world);
+  ui.resetForIsland();
+}
+
+function loadPreview() {
+  const latest = saves.recent();
+  replaceIsland(latest && saves.read(latest.id));
+}
+
+function openTitle(page = 'home') {
+  if (view.mode !== 'playing') return;
+  if (!saveActive()) {
+    ui.notify('This island could not be saved. You can try again from Save & Load.');
+    return;
+  }
+  clearPointer();
+  touchPointers.clear();
+  pinchState = null;
+  returnCamera = { ...screenToWorld(center(), renderCamera), zoom: renderCamera.zoom };
+  activeSlot = undefined;
+  hiddenAt = null;
+  setMode('menu');
+  scenicTime = 0;
+  loadPreview();
+  scenicCamera(0);
+  menu.show(page);
+}
+
+function enterIsland(id, fresh, confirmOverwrite = false) {
+  if (view.mode !== 'menu') return false;
+  let save = saves.read(id);
+  if (fresh) {
+    if (save && !confirmOverwrite) return false;
+    save = { state: structuredClone(pristine), savedAt: Date.now() };
+    if (!saves.write(id, save.state, save.savedAt)) return false;
+  }
+  if (!save) return false;
+  activeSlot = id;
+  entry = { save, from: screenToWorld(center(), renderCamera), zoom: renderCamera.zoom,
+    elapsed: 0, duration: reducedMotion.matches ? 0.2 : 1.25, fresh };
+  title.inert = true;
+  setMode('entering');
+  return true;
+}
+
+const campCenter = world.map.objects.find(object => object.type === 'campfire_site').anchor;
+const scenicPoints = [
+  { x: campCenter.x - 135, y: campCenter.y + 40 },
+  { x: campCenter.x - 35, y: campCenter.y },
+  { x: villageCenter.x + 95, y: villageCenter.y - 20 },
+  { x: campCenter.x - 80, y: villageCenter.y + 102 },
+];
+
+function scenicCamera(elapsed) {
+  const progress = (reducedMotion.matches ? 0 : elapsed / 12) % scenicPoints.length;
+  const index = Math.floor(progress);
+  const t = progress - index;
+  const [p0, p1, p2, p3] = [-1, 0, 1, 2].map(offset =>
+    scenicPoints[(index + offset + scenicPoints.length) % scenicPoints.length]);
+  const curve = (a, b, c, d) => 0.5 * (2 * b + (c - a) * t
+    + (2 * a - 5 * b + 4 * c - d) * t * t + (3 * b - a - 3 * c + d) * t * t * t);
+  const point = { x: curve(p0.x, p1.x, p2.x, p3.x), y: curve(p0.y, p1.y, p2.y, p3.y) };
+  camera.zoom = canvas.clientWidth < 580 ? 1.5 : 2;
+  if (returnCamera && elapsed < 1.25 && !reducedMotion.matches) {
+    const blend = smooth(elapsed / 1.25);
+    point.x = lerp(returnCamera.x, point.x, blend);
+    point.y = lerp(returnCamera.y, point.y, blend);
+    camera.zoom = lerp(returnCamera.zoom, camera.zoom, blend);
+  } else returnCamera = null;
+  centerOn(point);
+}
+
+function advanceEntry(dt) {
+  entry.elapsed += dt;
+  const progress = Math.min(1, entry.elapsed / entry.duration);
+  if (progress >= 0.18 && !entry.loaded) {
+    replaceIsland(entry.save);
+    entry.offline = entry.fresh ? 0 : advanceOffline(world, entry.save.savedAt);
+    world.state.time.paused = false;
+    entry.loaded = true;
+  }
+  const t = smooth(progress);
+  const gameplayZoom = canvas.clientWidth < 580 ? 1 : 2;
+  const scale = window.devicePixelRatio || 1;
+  const endZoom = settings.integer ? Math.max(1, Math.round(gameplayZoom * scale)) / scale : gameplayZoom;
+  camera.zoom = lerp(entry.zoom, endZoom, t);
+  centerOn({ x: lerp(entry.from.x, villageCenter.x, t), y: lerp(entry.from.y, villageCenter.y, t) });
+  if (progress < 1) return;
+  title.hidden = true;
+  const { offline } = entry;
+  entry = null;
+  setMode('playing');
+  ui.refreshStatus();
+  if (devOnEntry) ui.setDebug(true);
+  canvas.focus({ preventScroll: true });
+  if (offline >= 10) ui.notify('Your villagers continued their routines while you were away.');
+  saveActive();
+}
+
+function setFullscreen(enabled) {
+  if (!fullscreenSupported) return;
+  showFullscreenStatus('');
+  const change = enabled && !document.fullscreenElement ? document.documentElement.requestFullscreen()
+    : !enabled && document.fullscreenElement ? document.exitFullscreen() : null;
+  change?.catch(() => {
+    settings.fullscreen = Boolean(document.fullscreenElement);
+    syncFullscreen();
+    showFullscreenStatus('The browser did not allow this display change.');
+  });
+}
+
+function showFullscreenStatus(message) {
+  document.querySelectorAll('.fullscreen-status').forEach(status => { status.textContent = message; });
+}
+
+function syncFullscreen() {
+  document.querySelectorAll('[data-preference="fullscreen"]').forEach(input => { input.checked = settings.fullscreen; });
+  storePreferences(storage, settings);
+}
+
+function applyPreference(name, value) {
+  settings[name] = value;
+  storePreferences(storage, settings);
+  if (name === 'master' || name === 'music') ui.syncVolume();
+  if (name === 'sfx') sound('test');
+  if (name === 'fullscreen') setFullscreen(value);
+}
+
+document.addEventListener('fullscreenchange', () => {
+  settings.fullscreen = Boolean(document.fullscreenElement);
+  syncFullscreen();
+});
+function restoreFullscreen(event) {
+  if (!event.isTrusted) return;
+  document.removeEventListener('click', restoreFullscreen, true);
+  if (settings.fullscreen) setFullscreen(true);
+}
+document.addEventListener('click', restoreFullscreen, true);
+
+setInterval(() => { if (!document.hidden && hiddenAt === null) saveActive(); }, 5000);
+window.addEventListener('pagehide', () => { if (hiddenAt === null) saveActive(); });
 document.addEventListener('visibilitychange', () => {
-  if (replacingVillage) return;
+  if (view.mode !== 'playing') return;
   if (document.hidden) {
     hiddenAt = Date.now();
-    saveVillage(world, storage, hiddenAt);
+    saveActive(hiddenAt);
   } else if (hiddenAt !== null) {
     advanceOffline(world, hiddenAt);
     hiddenAt = null;
-    saveVillage(world, storage);
+    saveActive();
   }
 });
 
@@ -160,15 +352,15 @@ function refreshDropPreview() {
 }
 
 function updateDragPosition() {
-  view.drag.position = screenToWorld(pointer.screen, camera);
+  view.drag.position = screenToWorld(pointer.screen, renderCamera);
 }
 
 function positionDropHint() {
   if (dropHint.hidden || !view.drag.landing) return;
-  const anchor = worldToScreen(tileToWorld(view.drag.landing, size), camera);
+  const anchor = worldToScreen(tileToWorld(view.drag.landing, size), renderCamera);
   const margin = dropHint.offsetWidth / 2 + 6;
   dropHint.style.left = `${Math.round(Math.max(margin, Math.min(canvas.clientWidth - margin, anchor.x)))}px`;
-  dropHint.style.top = `${Math.round(Math.max(30, Math.min(pointer.screen.y - 46 * camera.zoom, anchor.y - 12)))}px`;
+  dropHint.style.top = `${Math.round(Math.max(30, Math.min(pointer.screen.y - 46 * renderCamera.zoom, anchor.y - 12)))}px`;
 }
 
 function liftVillager() {
@@ -203,10 +395,12 @@ function touchGestureSnapshot() {
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
   event.preventDefault();
+  if (view.mode !== 'playing') return;
   cameraController.handleWheel(event, canvasPosition(event));
 }, { passive: false });
 
 canvas.addEventListener('pointerdown', event => {
+  if (view.mode !== 'playing') return;
   const start = canvasPosition(event);
   if (event.pointerType === 'touch') {
     touchPointers.set(event.pointerId, start);
@@ -219,13 +413,14 @@ canvas.addEventListener('pointerdown', event => {
   }
   if (pointer || pinchState || (event.button !== 0 && event.button !== 2 && event.button !== 1)) return;
   const villager = !view.placementType && event.button === 0
-    ? renderer.pick(screenToWorld(start, camera), 'villager')?.entity : null;
+    ? renderer.pick(screenToWorld(start, renderCamera), 'villager')?.entity : null;
   pointer = { id: event.pointerId, start, screen: start, x: camera.x, y: camera.y, villager, moved: false, button: event.button };
   if (villager) pointer.holdTimer = setTimeout(liftVillager, 175);
   canvas.setPointerCapture(event.pointerId);
 });
 
 canvas.addEventListener('pointermove', event => {
+  if (view.mode !== 'playing') return;
   const screen = canvasPosition(event);
   if (event.pointerType === 'touch' && touchPointers.has(event.pointerId)) {
     touchPointers.set(event.pointerId, screen);
@@ -251,12 +446,13 @@ canvas.addEventListener('pointermove', event => {
   }
   if (view.placementType) {
     const definition = assets.buildings.find(building => building.type === view.placementType);
-    const tile = worldToTile(screenToWorld(screen, camera), size);
+    const tile = worldToTile(screenToWorld(screen, renderCamera), size);
     view.placement = previewPlacement(world, definition, tile);
   }
 });
 
 canvas.addEventListener('pointerup', event => {
+  if (view.mode !== 'playing') return;
   if (event.pointerType === 'touch') {
     touchPointers.delete(event.pointerId);
     if (touchPointers.size < 2) pinchState = null;
@@ -266,7 +462,7 @@ canvas.addEventListener('pointerup', event => {
   const held = Boolean(view.drag);
   clearPointer();
   if (button !== 0 || (moved && !villager)) return;
-  const position = screenToWorld(canvasPosition(event), camera);
+  const position = screenToWorld(canvasPosition(event), renderCamera);
   if (view.placementType) {
     const tile = worldToTile(position, size);
     const error = gameplay.place(view.placementType, tile);
@@ -294,7 +490,11 @@ for (const eventName of ['pointercancel', 'lostpointercapture']) canvas.addEvent
 });
 
 window.addEventListener('keydown', event => {
-  if (event.code === 'Space' && event.target === document.body) {
+  if (view.mode !== 'playing') {
+    if (event.key === 'Escape' && view.mode === 'menu') menu.closePanel();
+    return;
+  }
+  if (event.code === 'Space' && (event.target === document.body || event.target === canvas)) {
     event.preventDefault();
     ui.togglePause();
   }
@@ -310,16 +510,13 @@ window.addEventListener('keydown', event => {
   }
 });
 
-if (view.debug) {
-  view.debug = false;
-  document.getElementById('debug').click();
-}
-resetCamera();
-const wildlifeDirector = enableWildlifeDirector(world);
-ui.refreshStatus();
+setMode('menu');
+loadPreview();
+scenicCamera(0);
+menu.show();
 
 window.__ISLAND_DEV__ = {
-  world, view, camera, cameraController, renderer, ui,
+  world, view, camera, renderCamera, cameraController, renderer, ui,
   selectVillager,
   runDevAction: id => runDevAction(id, world, view, {
     resetHud: () => ui.hudWindows.resetLayout(),
@@ -337,9 +534,15 @@ function frame(now) {
     return;
   }
   const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
-  cameraController.update(dt);
-  wildlifeDirector.setView(cameraWorldRect(camera, canvas.clientWidth, canvas.clientHeight));
-  updateWorld(world, dt);
+  if (view.mode === 'menu') {
+    scenicTime += dt;
+    scenicCamera(scenicTime);
+  } else if (view.mode === 'entering') advanceEntry(dt);
+  else cameraController.update(dt);
+  syncRenderCamera();
+  wildlifeDirector.setView(cameraWorldRect(renderCamera, canvas.clientWidth, canvas.clientHeight));
+  if (view.mode === 'menu') updateIslandPreview(world, dt);
+  else if (view.mode === 'playing') updateWorld(world, dt);
   if (view.drag) {
     updateDragPosition();
     if (now - lastPreview >= 55) {
@@ -349,7 +552,7 @@ function frame(now) {
     }
   }
   renderer.render();
-  if (now - lastStatus >= 100) {
+  if (view.mode === 'playing' && now - lastStatus >= 100) {
     ui.refreshStatus();
     ui.refreshProfile();
     lastStatus = now;

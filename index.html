@@ -4,15 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#202e25">
-  <title>Island Colony Sandbox</title>
+  <title>Island Colony</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/studio/ui.css">
   <link rel="stylesheet" href="/game.css">
   <script type="module" src="/src/main.js"></script>
 </head>
 <body>
-  <main class="gu pixel">
-    <canvas id="island" aria-label="Interactive island map" aria-describedby="controls"></canvas>
+  <main class="gu pixel" data-mode="menu">
+    <canvas id="island" aria-label="Interactive island map" aria-describedby="controls" tabindex="-1"></canvas>
+    <div id="scene-dissolve" aria-hidden="true"></div>
     <div id="drop-action" role="status" hidden><img width="16" height="16" alt=""><span></span></div>
     <div id="studio-hud"></div>
     <div id="hud-windows" class="hud-windows-layer" aria-label="HUD windows"></div>

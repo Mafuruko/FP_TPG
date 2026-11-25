@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createAssets } from '../src/assets.js';
 import { readStudioModules } from '../tools/studios.js';
-import { createWorld, updateWorld } from '../src/world.js';
+import { createWorld, updateIslandPreview, updateWorld } from '../src/world.js';
 import { startGameplay } from '../src/gameplay.js';
 import { needStatus, skillProgress } from '../src/villagers.js';
 import { classifyWheelEvent, createCameraController, wheelZoomFactor } from '../src/camera-controls.js';
@@ -19,13 +19,75 @@ import {
 import { computeAtmosphere } from '../src/atmosphere.js';
 import { createClimate, sampleWeather, WEATHER_CONFIG } from '../src/climate.js';
 import { runDevAction } from '../src/dev-tools.js';
-import { restoreVillage } from '../src/save.js';
+import { createIslandSaves, readVillage, restoreVillage, saveVillage } from '../src/save.js';
+import { loadPreferences, storePreferences } from '../src/preferences.js';
 
 const { uiCss: _uiCss, ...modules } = await readStudioModules();
 const studios = Object.fromEntries(await Promise.all(Object.entries(modules).map(async ([key, code]) => [
   key, await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64')),
 ])));
 const assets = createAssets(studios);
+
+function browserStorage() {
+  const values = new Map();
+  return {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: key => values.delete(key),
+  };
+}
+
+test('island slots migrate the old village, rank by save time, and isolate their data', () => {
+  const storage = browserStorage();
+  const world = createWorld(assets);
+  world.state.time.day = 4;
+  assert.ok(saveVillage(world, storage, 100));
+  const saves = createIslandSaves(storage, world);
+  assert.deepEqual(saves.list().map(slot => slot.day), [4, undefined, undefined]);
+  assert.equal(readVillage(storage), null);
+  world.state.time.day = 9;
+  assert.ok(saves.write(2, world.state, 200));
+  assert.equal(saves.recent().id, 2);
+  assert.equal(saves.read(1).state.time.day, 4);
+  assert.equal(saves.read(2).state.settings, undefined);
+  assert.equal(saves.write(4, world.state, 400), false);
+  storage.setItem('island-colony.slot.3.v1', '{"savedAt":300,"state":{"version":1}}');
+  assert.equal(saves.read(3), null);
+  assert.ok(saves.remove(2));
+  assert.equal(saves.recent().id, 1);
+  assert.ok(saves.remove(1));
+  assert.equal(createIslandSaves(storage, world).recent(), undefined);
+});
+
+test('menu preview animates the world without simulating villager jobs or updating a save', () => {
+  const world = createWorld(assets);
+  const storage = browserStorage();
+  const saves = createIslandSaves(storage, world);
+  assert.ok(saves.write(1, world.state, 100));
+  startGameplay(world);
+  const villager = structuredClone(world.state.villagers[0]);
+  const before = JSON.stringify(world.state.wildlife);
+  world.state.time.paused = true;
+  updateIslandPreview(world, 0.75);
+  assert.equal(world.state.time.seconds, 0.75);
+  assert.deepEqual(world.state.villagers[0], villager);
+  assert.notEqual(JSON.stringify(world.state.wildlife), before);
+  assert.equal(saves.read(1).state.time.seconds, 0);
+  assert.equal(saves.recent().savedAt, 100);
+});
+
+test('global display, comfort and volume settings persist independently of island slots', () => {
+  const storage = browserStorage();
+  storage.setItem('island-colony.audio', '{"musicVolume":67}');
+  assert.equal(loadPreferences(storage).music, 67);
+  const changed = { ...loadPreferences(storage), master: 83, music: 54, sfx: 29, integer: true, lightning: true };
+  storePreferences(storage, changed);
+  const world = createWorld(assets);
+  const saves = createIslandSaves(storage, world);
+  assert.ok(saves.write(1, world.state));
+  assert.ok(saves.remove(1));
+  assert.deepEqual(loadPreferences(storage), changed);
+});
 
 test('skill progression divides each rank into levels 1-10 and promotes Trainee -> Adept -> Master', () => {
   const v = { skills: {} };

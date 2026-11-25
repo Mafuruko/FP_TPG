@@ -2,6 +2,84 @@ import { initializeWorldWildlife, updateWorld } from './world.js';
 
 const key = 'island-colony.village.v1';
 export const offlineLimit = 90;
+export const islandSlots = [1, 2, 3];
+const slotKey = id => `island-colony.slot.${id}.v1`;
+
+function validVillage(save, { map, assets }) {
+  const state = save?.state;
+  const point = value => Number.isFinite(value?.x) && Number.isFinite(value?.y);
+  return Number.isFinite(save?.savedAt) && state?.version === 1 && state.world?.mapId === assets.terrain.id
+    && Number.isFinite(state.time?.day) && Number.isFinite(state.time?.seconds) && Number.isFinite(state.time?.minutes)
+    && [1, 2, 3].includes(state.time.speed)
+    && ['resources', 'objects', 'weather', 'worldFlags', 'abilities', 'collectionProgress']
+      .every(field => state[field] && typeof state[field] === 'object')
+    && map.objects.every(object => state.objects[object.id] && typeof state.objects[object.id] === 'object')
+    && ['food', 'wood', 'stone', 'knowledge'].every(key => Number.isFinite(state.resources[key]))
+    && Array.isArray(state.villagers) && state.villagers.every(villager => point(villager?.position) && point(villager.tile)
+      && Array.isArray(villager.route) && villager.appearance && villager.needs && villager.skills && villager.relationships
+      && Object.hasOwn(assets.villager.animations, villager.animation))
+    && Array.isArray(state.buildings) && state.buildings.every(building => point(building?.tile)
+      && assets.registry.has(`building:${building.type}_${building.state}`))
+    && Array.isArray(state.wildlife) && state.wildlife.every(animal => point(animal?.position)
+      && point(animal.tile) && assets.animals.some(asset => asset.id === animal.assetId));
+}
+
+export function createIslandSaves(storage, world) {
+  const memory = new Map();
+  const store = storage ?? {
+    getItem: key => memory.get(key),
+    setItem: (key, value) => memory.set(key, value),
+    removeItem: key => memory.delete(key),
+  };
+
+  function read(id) {
+    if (!islandSlots.includes(id)) return null;
+    try {
+      const save = JSON.parse(store.getItem(slotKey(id)));
+      return validVillage(save, world) ? save : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function write(id, state, now = Date.now()) {
+    if (!islandSlots.includes(id) || !validVillage({ state, savedAt: now }, world)) return false;
+    try {
+      const { settings: _legacySettings, ...village } = state;
+      store.setItem(slotKey(id), JSON.stringify({ savedAt: now, state: village }));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function remove(id) {
+    if (!islandSlots.includes(id)) return false;
+    try {
+      store.removeItem(slotKey(id));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  const legacy = readVillage(store);
+  if (validVillage(legacy, world) && !islandSlots.some(id => read(id)) && write(1, legacy.state, legacy.savedAt)) {
+    try { store.removeItem(key); } catch { /* Keep the original backup if the browser disallows removal. */ }
+  }
+
+  function list() {
+    return islandSlots.map(id => {
+      const save = read(id);
+      return { id, name: `Island ${id}`, day: save?.state.time.day, villagers: save?.state.villagers.length, savedAt: save?.savedAt };
+    });
+  }
+
+  return {
+    read, write, remove, list, persistent: Boolean(storage),
+    recent: () => list().filter(slot => slot.savedAt !== undefined).sort((a, b) => b.savedAt - a.savedAt || a.id - b.id)[0],
+  };
+}
 
 export function readVillage(storage) {
   try {
@@ -25,6 +103,9 @@ export function restoreVillage(world, save) {
   if (!save || save.state.world?.mapId !== world.state.world.mapId) return false;
   const resources = world.state.resources;
   Object.assign(resources, save.state.resources);
+  for (const field of Object.keys(world.state)) {
+    if (!Object.hasOwn(save.state, field)) delete world.state[field];
+  }
   Object.assign(world.state, save.state, { resources });
   world.climate.reset();
   world.fishParticles = [];

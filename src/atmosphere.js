@@ -17,6 +17,7 @@ export const ATMOSPHERE_CONFIG = {
   rainSplashCount: 35,
   rainSpeed: 365,
   debrisCount: 24,
+  lightningIntensity: 0.085,
   reducedMotion: false,
 };
 
@@ -69,6 +70,20 @@ export function drawAtmosphereOverlay(context, width, height, atmosphere) {
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.globalCompositeOperation = 'multiply';
   context.fillStyle = atmosphere.overlayStyle;
+  context.fillRect(0, 0, width, height);
+  context.restore();
+}
+
+export function drawDistantLightning(context, width, height, rain, seconds, config = ATMOSPHERE_CONFIG) {
+  if (rain < 0.86 || config.reducedMotion || config.lightningIntensity <= 0) return;
+  const cycle = Math.floor(seconds / 47);
+  const age = seconds - (cycle * 47 + 12 + hash(cycle + 405) * 30);
+  if (age < 0 || age > 0.42) return;
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.globalCompositeOperation = 'screen';
+  context.globalAlpha = Math.sin(Math.PI * age / 0.42) * config.lightningIntensity;
+  context.fillStyle = '#d4e0ee';
   context.fillRect(0, 0, width, height);
   context.restore();
 }

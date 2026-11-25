@@ -1,5 +1,5 @@
 import { ATMOSPHERE_CONFIG, computeAtmosphere, drawAtmosphereOverlay, drawCloudShadows,
-  drawNightLights, drawRain, drawWeatherParticles } from './atmosphere.js';
+  drawDistantLightning, drawNightLights, drawRain, drawWeatherParticles } from './atmosphere.js';
 import { tileToWorld, worldToTile } from './geometry.js';
 import { birdVisuals } from './birds.js';
 import { dolphinVisuals } from './dolphin.js';
@@ -497,7 +497,8 @@ export function createRenderer(canvas, world, camera, view) {
   }
 
   function render() {
-    const scale = Math.min(window.devicePixelRatio || 1, RENDER_CONFIG.maxDpr);
+    const dpr = window.devicePixelRatio || 1;
+    const scale = view.settings?.integer ? dpr : Math.min(dpr, RENDER_CONFIG.maxDpr);
     const width = Math.round(canvas.clientWidth * scale);
     const height = Math.round(canvas.clientHeight * scale);
     if (canvas.width !== width || canvas.height !== height) {
@@ -584,6 +585,8 @@ export function createRenderer(canvas, world, camera, view) {
     drawAtmosphereOverlay(context, width, height, atmosphere);
     drawNightLights(context, world, atmosphere, bounds);
     drawRain(context, width, height, state.time.seconds, scale, atmosphere);
+    if (view.settings?.lightning) drawDistantLightning(context, width, height, atmosphere.rain, state.time.seconds);
+    if (view.mode && view.mode !== 'playing') return;
     if (state.abilities.fish) {
       const wave = assets.registry.get('icon_arrowD');
       for (const spot of map.fishingSpots) {

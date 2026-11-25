@@ -305,6 +305,13 @@ export function updateWorld(world, delta) {
   updateWildlife(world, elapsed);
 }
 
+export function updateIslandPreview(world, elapsed) {
+  if (elapsed <= 0) return;
+  world.climate.advance(elapsed);
+  updateGroundParticles(world, elapsed);
+  updateWildlife(world, elapsed);
+}
+
 export function previewPlacement(world, definition, origin) {
   const asset = definition?.states.ghost;
   if (!asset) return null;

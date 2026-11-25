@@ -1,6 +1,6 @@
 # Update Log — Naufy (Chronological Summary)
 
-This document records Naufy’s Island Colony changes from the first playable village through the latest lighting and weather update. Each patch lists the main files, what changed, and what Rafi can check in the game.
+This document records Naufy’s Island Colony changes from the first playable village through the live main menu and island save slots. Each patch lists the main files, what changed, and what Rafi can check in the game.
 
 ---
 
@@ -206,3 +206,25 @@ This document records Naufy’s Island Colony changes from the first playable vi
 
 1. Open both logs and compare their patch headings, file lists, summaries, and verification steps.
 2. Look for a new entry at the bottom after the next completed update.
+
+---
+
+## Patch 12 — Live Island Main Menu and Three Save Slots
+
+**Files**
+
+`src/main-menu.js`, `src/main.js`, `src/save.js`, `src/preferences.js`, `src/ui.js`, `src/world.js`, `src/render.js`, `src/atmosphere.js`, `index.html`, `game.css`, `docs/ARCHITECTURE.md`, `tests/features.test.js`
+
+### Summary
+
+- Added a title screen that pans across the live island with active weather, surf, and wildlife. It previews the latest valid save or the starting island while keeping gameplay controls out of the way.
+- Added three separate save slots with Continue, new and load flows, and confirmation before deleting or overwriting. Existing single-village saves can migrate to Slot 1.
+- Added a 1.25-second camera glide into gameplay and a return to the title from the pause menu.
+- Added independent volume sliders, fullscreen, integer scaling, and opt-in lightning settings. The menu uses existing pixel icons and soft synthesized button sounds.
+
+### What to check
+
+1. Open the game and watch the island pan behind the title. Check that the gameplay HUD appears after entering an island.
+2. Create islands in two slots, then return through the pause menu. Check the day and villager count on each slot and verify that Continue opens the most recent one.
+3. Cancel an overwrite and confirm the island is still there. Try deleting a test island and check that the slot becomes empty.
+4. Change the volume or display settings, reload, and verify that the settings carry across islands.

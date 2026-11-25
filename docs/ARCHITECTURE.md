@@ -22,7 +22,13 @@ The Resource Manager publishes changes to the shared counters. `src/gameplay.js`
 
 `src/main.js` runs the simulation and renderer, converts input through the camera and distinguishes dragging villagers from panning. `src/ui.js` adapts current state to the supplied HUD components, journal and Collection Book. Debug tools remain a separate runtime panel.
 
-`src/save.js` stores a versioned snapshot in local storage and advances an unpaused village in small simulation steps after an absence. It caps catch-up at 90 real seconds. Collision is rebuilt from the authored map and saved changes. Audio volume uses its own preference key.
+`src/save.js` stores three independently versioned island snapshots in browser storage. Continue selects the latest valid snapshot by save time. The first launch with the new system imports the older single save into Slot 1 when all three slots are empty. Only the active gameplay slot receives autosaves or offline catch-up. Catch-up caps at 90 real seconds, and collision is rebuilt from the map and the loaded island.
+
+## Main menu and settings
+
+`src/main.js` runs the `menu`, `entering`, and `playing` states. The menu renders a copy of the latest island, or the starting island, through the same renderer as gameplay. Its ambient update advances climate and wildlife while villager tasks and saves wait for entry. The camera follows a scenic loop and glides to the starting village when an island is opened. Returning through the pause menu saves the active slot and reuses the canvas and sprite cache.
+
+`src/main-menu.js` owns the title screen, island selector, and delete and overwrite confirmations. `src/preferences.js` stores audio, display, and comfort preferences under a separate browser storage key. The title uses existing Studio icons and a small canvas wordmark. The two short menu sound cues are synthesized in `createMenuSounds`, which is the hookup for replacing them with audio files. Lightning is opt-in and uses the intensity in `ATMOSPHERE_CONFIG`.
 
 ## Island clock, weather, and lights
 

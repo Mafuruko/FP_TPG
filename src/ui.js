@@ -9,6 +9,7 @@ import { bindSmartTooltips } from './tooltips.js';
 import { createHudWindowManager } from './hud-windows.js';
 import { renderDevActionsHtml, runDevAction } from './dev-tools.js';
 import { createMusicPlayer } from './music.js';
+import { bindPreferences, renderPreferences } from './preferences.js';
 
 const element = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char =>
@@ -32,9 +33,6 @@ const collectionTabs = [
   ['artifact', 'Artifacts'],
   ['butterfly', 'Butterflies'],
 ];
-const audioStorageKey = 'island-colony.audio';
-const minimumMusicVolume = 1;
-const maximumMusicVolume = 100;
 
 const RESOURCES_TAB_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14" width="14" height="14" shape-rendering="crispEdges" aria-hidden="true">
   <path fill="#3b2a22" d="M2 3h10v9H2z"/>
@@ -67,18 +65,6 @@ export const NEED_ICONS = {
   </svg>`,
 };
 
-function clampMusicVolume(volume) {
-  return Math.max(minimumMusicVolume, Math.min(maximumMusicVolume, volume));
-}
-
-function readAudioSettings() {
-  try {
-    return JSON.parse(localStorage.getItem(audioStorageKey)) ?? {};
-  } catch {
-    return {};
-  }
-}
-
 function formatClockTime(minutes) {
   const m = ((Math.floor(minutes) % 1440) + 1440) % 1440;
   const hh = String(Math.floor(m / 60)).padStart(2, '0');
@@ -102,13 +88,9 @@ export function createUI(world, view, actions) {
   const hud = element('studio-hud');
   const hudWindowsLayer = element('hud-windows');
   const debugPanel = element('debug-panel');
-  const title = element('title-screen');
   let storage = null;
   try { storage = window.localStorage; } catch { /* Ignore storage unavailability. */ }
-  const preferences = readAudioSettings();
-  if (Number.isInteger(preferences.musicVolume)) {
-    state.settings.musicVolume = clampMusicVolume(preferences.musicVolume);
-  }
+  const { preferences } = actions;
   let menu = null;
   let collectionDetail = null;
   let collectionTab = 'seashell';
@@ -133,7 +115,7 @@ export function createUI(world, view, actions) {
   const notes = [];
   let lastRevision;
   const music = createMusicPlayer({
-    volume: state.settings.musicVolume / 100,
+    volume: preferences.master * preferences.music / 10000,
     onError: () => notify('Music could not start in this browser.'),
   });
 
@@ -247,31 +229,12 @@ export function createUI(world, view, actions) {
     noticeTimer = setTimeout(() => { toasts.replaceChildren(); }, 3600);
   }
 
-  function refreshMusicControls() {
-    const slider = element('music-volume');
-    if (!slider) return;
-    const { musicVolume } = state.settings;
-    slider.value = musicVolume;
-    element('music-volume-value').value = `${musicVolume}%`;
-  }
-
-  function saveAudioSettings() {
-    const { musicVolume } = state.settings;
-    try {
-      localStorage.setItem(audioStorageKey, JSON.stringify({ musicVolume }));
-    } catch {
-      // Audio controls still apply for this session.
-    }
-  }
-
   function syncMusic() {
-    music.select(musicTrack(state));
+    music.select(view.mode === 'playing' ? musicTrack(state) : 'menu');
   }
 
-  function setVolume(volume) {
-    state.settings.musicVolume = clampMusicVolume(volume);
-    music.setVolume(state.settings.musicVolume / 100);
-    refreshMusicControls();
+  function syncVolume() {
+    music.setVolume(preferences.master * preferences.music / 10000);
   }
 
   function startMusic(event) {
@@ -660,18 +623,7 @@ export function createUI(world, view, actions) {
   }
 
   function renderSettings() {
-    return `<section class="gu-col" aria-labelledby="audio-title">
-      <h3 id="audio-title" class="gu-h">Audio</h3>
-      <div class="volume-control">
-        <label for="music-volume">Music volume</label>
-        <output id="music-volume-value" for="music-volume">${state.settings.musicVolume}%</output>
-        <input class="gu-sl" id="music-volume" type="range" min="${minimumMusicVolume}" max="${maximumMusicVolume}" value="${state.settings.musicVolume}">
-      </div>
-      <div class="gu-row">
-        ${btn('Min', { v: 's', act: 'volume', arg: minimumMusicVolume, label: 'Minimum volume' })}
-        ${btn('Max', { v: 's', act: 'volume', arg: maximumMusicVolume, label: 'Maximum volume' })}
-      </div>
-    </section>
+    return `${renderPreferences(preferences, actions.fullscreenSupported)}
     <div class="gu-div"></div>
     <section class="gu-col" aria-labelledby="hud-settings-title">
       <h3 id="hud-settings-title" class="gu-h">HUD Layout</h3>
@@ -703,8 +655,7 @@ export function createUI(world, view, actions) {
     save: () => `<p>The village saves automatically in this browser.</p>
       ${actions.lastSave?.() ? `<p>Last save: ${escape(new Date(actions.lastSave()).toLocaleString())}</p>` : ''}
       <div class="gu-row">${btn('Save now', { icon: 'save', act: 'save-now' })}
-        ${btn('Reload village', { icon: 'load', v: 's', act: 'reload-save' })}
-        ${btn('New village', { v: 'd', act: 'reset-village' })}</div>`,
+        ${btn('Manage islands', { icon: 'load', v: 's', act: 'islands' })}</div>`,
     notifications: renderNotifications,
     pause: () => `<div class="entries">${btn('Resume', { icon: 'play', act: 'resume' })}
       ${btn('Save & Load', { icon: 'save', v: 's', act: 'open', arg: 'save' })}
@@ -888,27 +839,12 @@ export function createUI(world, view, actions) {
     syncMusic();
   }
 
-  function openTitle() {
-    menuHistory.length = 0;
-    setMenu(null);
-    setSpeed(0);
-    title.hidden = false;
-    title.innerHTML = GameUI.renderMainMenu({
-      title: 'Island Colony', settings: { tagline: 'Development sandbox' }, saves: [],
-    });
-    title.querySelector('h1').nextElementSibling.remove();
-    title.querySelector('[data-act="newgame"] span').textContent = 'Return to island';
-    for (const act of ['continue', 'exit']) title.querySelector(`[data-act="${act}"]`).remove();
-    title.querySelector('[data-arg="credits"]').remove();
-    title.querySelector('[data-act="newgame"]').focus();
-  }
-
   document.querySelector('main').addEventListener('click', event => {
+    if (view.mode !== 'playing') return;
     const button = event.target.closest('button[data-act]');
     if (!button) return;
     const { act, arg } = button.dataset;
     if (act === 'open') {
-      title.hidden = true;
       const next = arg === 'build' ? 'buildings' : arg;
       if (menu === next) closeMenu();
       else {
@@ -929,14 +865,13 @@ export function createUI(world, view, actions) {
       const camera = { in: () => actions.adjustZoom(1), out: () => actions.adjustZoom(-1),
         reset: actions.resetCamera, focus: actions.focusVillager, fit: actions.fitCamera };
       camera[arg]();
-    } else if (act === 'resume' || act === 'newgame') {
-      title.hidden = true;
+    } else if (act === 'resume') {
       menuHistory.length = 0;
       setMenu(null);
       setSpeed(state.time.speed);
       timePanel.querySelector(`[data-act="speed"][data-arg="${state.time.speed}"]`)?.focus();
     } else if (act === 'title') {
-      openTitle();
+      actions.openTitle();
     } else if (act === 'dismiss') {
       toasts.replaceChildren();
     } else if (act === 'research') {
@@ -949,17 +884,11 @@ export function createUI(world, view, actions) {
     } else if (act === 'save-now') {
       notify(actions.save() ? 'Village saved.' : 'This browser could not save the village.');
       renderMenu();
-    } else if (act === 'reload-save') {
-      if (actions.save()) actions.reload();
-      else notify('This browser could not save the village.');
-    } else if (act === 'reset-village') {
-      actions.resetVillage();
+    } else if (act === 'islands') {
+      actions.openTitle('islands');
     } else if (act === 'reset-hud') {
       hudWindows.resetLayout();
       notify('HUD layout reset to default.');
-    } else if (act === 'volume') {
-      setVolume(Number(arg));
-      saveAudioSettings();
     } else if (act === 'colsel' || act === 'coltab') {
       if (act === 'coltab') {
         collectionTab = arg;
@@ -991,9 +920,7 @@ export function createUI(world, view, actions) {
       renderMenu();
     }
   });
-  content.addEventListener('input', event => {
-    if (event.target.id === 'music-volume') setVolume(Number(event.target.value));
-  });
+  bindPreferences(content, actions.applyPreference);
   content.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
@@ -1003,9 +930,6 @@ export function createUI(world, view, actions) {
       setMenu(null);
       notify('Choose a clear village footprint. Click to place the foundation or Escape to cancel.');
     }
-  });
-  content.addEventListener('change', event => {
-    if (event.target.id === 'music-volume') saveAudioSettings();
   });
 
   function selectVillager(villager) {
@@ -1025,12 +949,28 @@ export function createUI(world, view, actions) {
   }
 
   function closeMenu() {
-    const fromTitle = Boolean(menu && menuTrigger && title.contains(menuTrigger));
-    title.hidden = !fromTitle;
     menuHistory.length = 0;
     setMenu(null);
     menuTrigger?.focus();
     menuTrigger = null;
+  }
+
+  function resetForIsland() {
+    menuTrigger = null;
+    menuHistory.length = 0;
+    notes.length = 0;
+    lastRevision = undefined;
+    lastPopulation = undefined;
+    lastClockVisualKey = undefined;
+    lastSpeed = undefined;
+    villagerPage = buildingSitePage = journalPage = notesPage = 0;
+    selection.replaceChildren();
+    toasts.replaceChildren();
+    element('overlays').querySelectorAll('input').forEach(input => { input.checked = false; });
+    clearTimeout(noticeTimer);
+    setMenu(null);
+    setDebug(false);
+    resources.forEach(({ id }, index) => { counters[index].querySelector('span').textContent = world.resources.get(id); });
   }
 
   function togglePause() {
@@ -1045,6 +985,7 @@ export function createUI(world, view, actions) {
   const tooltips = bindSmartTooltips(document.querySelector('main'));
   return {
     inspect, notify, selectVillager, refreshStatus, refreshProfile, closeMenu, togglePause,
+    resetForIsland, syncMusic, syncVolume,
     hudWindows, tooltips, setMenu, setDebug,
   };
 }
