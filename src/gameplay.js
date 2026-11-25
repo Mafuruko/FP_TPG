@@ -1,4 +1,5 @@
 import { describeInteraction } from './assets.js';
+import { sampleWeather } from './climate.js';
 import { findRoute, neighbors, tileToWorld, walkable } from './geometry.js';
 import { emitGroundDust, groundContact, groundPosition, villagerGroundTuning } from './ground.js';
 import { construction, costLabel, landmarks, researchProjects } from './progression.js';
@@ -29,7 +30,7 @@ export function startGameplay(world) {
   const { tileSize } = map.meta;
   const listeners = new Set();
   const camp = map.objects.find(object => object.type === 'campfire_site');
-  state.simulation ??= { nextNeeds: 12, nextCollectible: 8, nextBirthday: 180, nextIllness: 110, nextVillager: 6, nextWeather: 150 };
+  state.simulation ??= { nextNeeds: 12, nextCollectible: 8, nextBirthday: 180, nextIllness: 110, nextVillager: 6 };
   const clock = state.simulation;
   let revision = 0;
   let reachableCollectibleTiles;
@@ -803,6 +804,7 @@ export function startGameplay(world) {
     if (state.activeCollectibles.length >= 5 && replace < 0) return;
     const active = new Set(state.activeCollectibles.filter((_, index) => index !== replace).map(item => item.assetId));
     const day = state.time.minutes >= 360 && state.time.minutes < 1140 ? 'day' : 'night';
+    const weather = sampleWeather(state.weather, state.time.seconds).rain >= 0.12 ? 'rain' : 'clear';
     const learned = Object.keys(researchProjects).filter(id => state.abilities[id]).length;
     const requirements = {
       research_level_1: learned >= 1, research_level_2: learned >= 2, research_level_3: learned >= 3,
@@ -812,7 +814,7 @@ export function startGameplay(world) {
     const zonesFor = asset => asset.id === 'butterfly_moonlight' ? ['garden_zone_001'] : asset.spawn.mapZoneIds;
     const candidates = assets.collectibles.filter(asset => !active.has(asset.id)
       && (asset.spawn.timeOfDay.includes('any') || asset.spawn.timeOfDay.includes(day))
-      && (asset.spawn.weather.includes('any') || asset.spawn.weather.includes(state.weather.current))
+      && (asset.spawn.weather.includes('any') || asset.spawn.weather.includes(weather))
       && asset.spawn.requires.every(requirement => requirements[requirement])
       && zonesFor(asset).some(id => tilesByZone.get(id)?.length));
     if (!candidates.length) return;
@@ -868,11 +870,6 @@ export function startGameplay(world) {
         }
         for (const villager of deceased) announce(`${villager.name} passed away at age ${villager.age}.`);
       }
-    }
-    if (now >= clock.nextWeather) {
-      clock.weatherChanges = (clock.weatherChanges || 0) + 1;
-      state.weather.current = state.weather.current === 'clear' ? 'rain' : 'clear';
-      clock.nextWeather += state.weather.current === 'clear' ? 145 + clock.weatherChanges % 4 * 10 : 38;
     }
     if (now >= clock.nextCollectible) {
       clock.nextCollectible += 17;

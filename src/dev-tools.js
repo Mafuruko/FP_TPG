@@ -10,7 +10,7 @@ export const DEV_CONFIG = {
   timePresets: {
     dawn: 360,     // 06:00
     day: 720,      // 12:00
-    dusk: 1110,    // 18:30
+    dusk: 1170,    // 19:30
     night: 0,      // 00:00
   },
 };
@@ -22,12 +22,14 @@ export const DEV_GROUPS = [
     actions: [
       { id: 'time-dawn', label: 'Dawn (06:00)', tip: 'Set island clock to 06:00 sunrise' },
       { id: 'time-day', label: 'Day (12:00)', tip: 'Set island clock to bright noon' },
-      { id: 'time-dusk', label: 'Dusk (18:30)', tip: 'Set island clock to warm sunset' },
+      { id: 'time-dusk', label: 'Dusk (19:30)', tip: 'Set island clock to purple twilight' },
       { id: 'time-night', label: 'Night (00:00)', tip: 'Set island clock to midnight' },
       { id: 'time-plus-hour', label: '+1 Hour', tip: 'Advance the island clock by 60 minutes' },
       { id: 'time-plus-day', label: '+1 Day', tip: 'Advance the island calendar by 1 day' },
-      { id: 'weather-clear', label: 'Clear Sky', tip: 'Switch weather to clear immediately' },
-      { id: 'weather-rain', label: 'Start Rain', tip: 'Switch weather to rain immediately' },
+      { id: 'weather-clear', label: 'Clear Sky', tip: 'Fade to clear weather' },
+      { id: 'weather-cloudy', label: 'Cloudy', tip: 'Fade to cloudy, breezy weather' },
+      { id: 'weather-rain', label: 'Light Rain', tip: 'Fade into light rain' },
+      { id: 'weather-heavy-rain', label: 'Heavy Rain', tip: 'Fade into heavy rain' },
     ],
   },
   {
@@ -120,40 +122,40 @@ function completeLandmark(world, puzzleId) {
 export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CONFIG) {
   const { state, resources, map, assets } = world;
   const clock = state.simulation ?? (state.simulation = {
-    nextNeeds: 12, nextCollectible: 8, nextBirthday: 180, nextIllness: 110, nextVillager: state.villagers.length + 1, nextWeather: 150,
+    nextNeeds: 12, nextCollectible: 8, nextBirthday: 180, nextIllness: 110, nextVillager: state.villagers.length + 1,
   });
 
   switch (actionId) {
     case 'time-dawn':
-      state.time.minutes = config.timePresets.dawn;
+      world.climate.setClock(config.timePresets.dawn);
       return { ok: true, message: 'Dev: Clock set to Dawn (06:00).' };
     case 'time-day':
-      state.time.minutes = config.timePresets.day;
+      world.climate.setClock(config.timePresets.day);
       return { ok: true, message: 'Dev: Clock set to Day (12:00).' };
     case 'time-dusk':
-      state.time.minutes = config.timePresets.dusk;
-      return { ok: true, message: 'Dev: Clock set to Dusk (18:30).' };
+      world.climate.setClock(config.timePresets.dusk);
+      return { ok: true, message: 'Dev: Clock set to Dusk (19:30).' };
     case 'time-night':
-      state.time.minutes = config.timePresets.night;
+      world.climate.setClock(config.timePresets.night);
       return { ok: true, message: 'Dev: Clock set to Night (00:00).' };
     case 'time-plus-hour':
-      state.time.minutes += 60;
-      if (state.time.minutes >= 1440) {
-        state.time.day += Math.floor(state.time.minutes / 1440);
-        state.time.minutes %= 1440;
-      }
+      world.climate.setClock(state.time.minutes + 60);
       return { ok: true, message: 'Dev: Advanced clock +1 hour.' };
     case 'time-plus-day':
       state.time.day += 1;
       return { ok: true, message: `Dev: Advanced to Day ${state.time.day}.` };
     case 'weather-clear':
-      state.weather.current = 'clear';
-      clock.nextWeather = state.time.seconds + 150;
-      return { ok: true, message: 'Dev: Weather set to Clear.' };
+      world.climate.setWeather('clear');
+      return { ok: true, message: 'Dev: Clearing skies.' };
+    case 'weather-cloudy':
+      world.climate.setWeather('cloudy');
+      return { ok: true, message: 'Dev: Clouds rolling in.' };
     case 'weather-rain':
-      state.weather.current = 'rain';
-      clock.nextWeather = state.time.seconds + 60;
-      return { ok: true, message: 'Dev: Weather set to Rain.' };
+      world.climate.setWeather('light_rain');
+      return { ok: true, message: 'Dev: Light rain approaching.' };
+    case 'weather-heavy-rain':
+      world.climate.setWeather('heavy_rain');
+      return { ok: true, message: 'Dev: Heavy rain approaching.' };
 
     case 'res-all':
       for (const key of ['food', 'wood', 'stone', 'knowledge']) resources.add(key, config.allResourceBurst);

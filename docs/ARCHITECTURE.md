@@ -24,6 +24,14 @@ The Resource Manager publishes changes to the shared counters. `src/gameplay.js`
 
 `src/save.js` stores a versioned snapshot in local storage and advances an unpaused village in small simulation steps after an absence. It caps catch-up at 90 real seconds. Collision is rebuilt from the authored map and saved changes. Audio volume uses its own preference key.
 
+## Island clock, weather, and lights
+
+`src/climate.js` advances the 24-hour clock and schedules clear, cloudy, light rain, and heavy rain. Adjust `CLOCK_CONFIG.dayLengthSeconds`, `WEATHER_CONFIG`, and `weatherProfiles` to change the cycle speed, transition duration, weather odds, or wind and rain strength. Active blends persist in the village save. `world.climate.subscribe(event, listener)` returns an unsubscribe function. Use `on_time_period_changed` for clock period changes and `on_weather_changed` for the start of a transition. Both deliver a `{ from, to }` payload. Use `sampleWeather` for the current mix of rain, cloud, and wind.
+
+`src/atmosphere.js` holds the color stops and glow presets. The renderer multiplies the world colors before drawing additive lights and rain. Clear noon uses white, and the HUD stays at its normal brightness. Set `ATMOSPHERE_CONFIG.reducedMotion` to reduce moving effects.
+
+The lit campfire and completed buildings receive default glows. To attach a light to a map prop, add `glow: { preset: 'lantern', offset: { x: 2, y: -12 } }` to the object metadata in the Island Map Studio. A building instance can carry the same `glow` descriptor. Offsets are world pixels from the sprite anchor. Use `campfire`, `window`, `torch`, or `lantern` and optionally override `radius` and `intensity`. A `requiresFlag` value such as `'light_campfire'` gates the glow on a landmark flag. Set `glow: false` to opt out of the default building or campfire glow.
+
 ## Bird movement
 
 `src/birds.js` drives the Island Songbird and Seagull through `GROUNDED`, `TAKEOFF`, `FLYING` and `LANDING`. The world position tracks the point on the map below the bird. Altitude, vertical velocity and horizontal momentum live in the saved bird state. Landing and walking use walkable habitat tiles, while airborne movement can cross terrain outside that habitat. Older saves initialize birds on valid ground.

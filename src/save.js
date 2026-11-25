@@ -26,6 +26,7 @@ export function restoreVillage(world, save) {
   const resources = world.state.resources;
   Object.assign(resources, save.state.resources);
   Object.assign(world.state, save.state, { resources });
+  world.climate.reset();
   world.fishParticles = [];
   world.groundParticles = [];
   world.shoreRipples = [];

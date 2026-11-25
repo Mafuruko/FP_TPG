@@ -1,5 +1,6 @@
 import { describeInteraction } from './assets.js';
 import { birdAnimations, initializeBird, updateBird } from './birds.js';
+import { createClimate } from './climate.js';
 import { initializeDolphin, updateDolphin } from './dolphin.js';
 import { fishAnimations, initializeFish, updateFish, updateFishParticles } from './fish.js';
 import { recordGroundTravel, resolveVillagerSpacing, updateGroundParticles, villagerGroundTuning } from './ground.js';
@@ -144,6 +145,7 @@ export function createWorld(assets) {
   };
   const world = {
     assets, map, state, resources: createResourceManager(state.resources), collision: map.collisionGrid.map(row => row.slice()),
+    climate: createClimate(state),
     habitatTiles: wildlife.habitatTiles,
     fishParticles: [],
     groundParticles: [],
@@ -278,15 +280,10 @@ function updateWildlife(world, time) {
 
 export function updateWorld(world, delta) {
   const { time, villagers } = world.state;
-  if (time.paused || delta <= 0) return;
   const elapsed = delta * time.speed;
+  if (time.paused || elapsed <= 0) return;
   updateGroundParticles(world, elapsed);
-  time.seconds += elapsed;
-  time.minutes += elapsed * 5;
-  if (time.minutes >= 1440) {
-    time.day += Math.floor(time.minutes / 1440);
-    time.minutes %= 1440;
-  }
+  world.climate.advance(elapsed);
   for (const villager of villagers) {
     if (world.heldVillager === villager.id) continue;
     const before = { ...villager.position };

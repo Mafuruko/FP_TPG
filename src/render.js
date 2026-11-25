@@ -1,4 +1,5 @@
-import { computeAtmosphere, drawAtmosphereOverlay, drawNightLights, drawRain } from './atmosphere.js';
+import { ATMOSPHERE_CONFIG, computeAtmosphere, drawAtmosphereOverlay, drawCloudShadows,
+  drawNightLights, drawRain, drawWeatherParticles } from './atmosphere.js';
 import { tileToWorld, worldToTile } from './geometry.js';
 import { birdVisuals } from './birds.js';
 import { dolphinVisuals } from './dolphin.js';
@@ -39,8 +40,6 @@ export function createRenderer(canvas, world, camera, view) {
   const overlay = document.createElement('canvas');
   overlay.width = pixelWidth;
   overlay.height = pixelHeight;
-  const atmosphereVeil = typeof document !== 'undefined' ? document.getElementById('atmosphere-veil') : null;
-  let lastVeilStyle = '';
   let overlayKey = null;
   let hits = [];
 
@@ -120,12 +119,26 @@ export function createRenderer(canvas, world, camera, view) {
     if (sprite.impact && ready) {
       const { wide, tall } = sprite.impact;
       context.drawImage(spriteImage, x - wide / 2, y - tall, asset.width + wide, asset.height + tall);
-    } else if (sprite.angle || sprite.aquatic?.tint) drawSpriteVariant(spriteImage, sprite);
+    } else if (sprite.sway) drawSway(spriteImage, sprite);
+    else if (sprite.angle || sprite.aquatic?.tint) drawSpriteVariant(spriteImage, sprite);
     else if (ready) context.drawImage(spriteImage, x, y);
     if (faded) context.globalAlpha = 1;
     if (hit && ready) {
-      hits.push({ entity, x, y, width: asset.width, height: asset.height, hit, image: spriteImage });
+      hits.push({ entity, x, y, width: asset.width, height: asset.height, hit, image: spriteImage, sway: sprite.sway });
     }
+  }
+
+  function drawSway(source, sprite) {
+    if (!isReady(source)) return;
+    const { x, y, sway, asset: { width, height } } = sprite;
+    if (!sway) {
+      context.drawImage(source, x, y);
+      return;
+    }
+    const band = Math.floor(height / 3);
+    context.drawImage(source, 0, 0, width, band, x + sway, y, width, band);
+    context.drawImage(source, 0, band, width, band, x + Math.trunc(sway / 2), y + band, width, band);
+    context.drawImage(source, 0, band * 2, width, height - band * 2, x, y + band * 2, width, height - band * 2);
   }
 
   function drawSpriteVariant(source, sprite) {
@@ -162,15 +175,16 @@ export function createRenderer(canvas, world, camera, view) {
     context.drawImage(layer, x, y - margin);
   }
 
-  function drawContactShadow(sprite, shadow, color) {
+  function drawContactShadow(sprite, shadow, color, sun) {
     const { shadowWidth, shadowHeight, shadowOpacity } = shadow;
-    const left = Math.round(sprite.position.x - shadowWidth / 2);
-    const top = Math.round(sprite.position.y - shadowHeight / 2);
+    const width = Math.round(shadowWidth * (sun?.stretch ?? 1));
+    const left = Math.round(sprite.position.x + (sun?.x ?? 0) - width / 2);
+    const top = Math.round(sprite.position.y + (sun?.y ?? 0) - shadowHeight / 2);
     context.fillStyle = color;
-    context.globalAlpha = shadowOpacity * (sprite.opacity ?? 1);
+    context.globalAlpha = shadowOpacity * (sprite.opacity ?? 1) * (sun?.opacity ?? 1);
     for (let row = 0; row < shadowHeight; row++) {
-      const inset = row === 0 || row === shadowHeight - 1 ? Math.round(shadowWidth / 5) : 0;
-      context.fillRect(left + inset, top + row, shadowWidth - inset * 2, 1);
+      const inset = row === 0 || row === shadowHeight - 1 ? Math.round(width / 5) : 0;
+      context.fillRect(left + inset, top + row, width - inset * 2, 1);
     }
     context.globalAlpha = 1;
   }
@@ -516,6 +530,7 @@ export function createRenderer(canvas, world, camera, view) {
       const sh = ey - sy;
       if (sw > 0 && sh > 0) context.drawImage(terrainSource, sx, sy, sw, sh, sx, sy, sw, sh);
     }
+    const atmosphere = computeAtmosphere(state.time.minutes, state.weather, state.time.seconds);
     hits = [];
     const scenery = objects(bounds);
     const villagersOnMap = villagers();
@@ -523,6 +538,11 @@ export function createRenderer(canvas, world, camera, view) {
     const flatScenery = [];
     const tallScenery = [];
     for (const sprite of scenery) {
+      if (!ATMOSPHERE_CONFIG.reducedMotion && (sprite.entity.canopy || sprite.entity.type === 'tall_grass')) {
+        const { wind, gust } = atmosphere;
+        const phase = state.time.seconds * 1.65 + wind * 2.1 * Math.sin(state.time.seconds * 0.6) + sprite.x * 0.035;
+        sprite.sway = Math.round(Math.sin(phase) * (wind * (2.2 + gust * 1.6)));
+      }
       if (sprite.entity.canopy) foreground.push(sprite);
       if (sprite.entity.layer === 'ground-decoration' && sprite.entity.type !== 'tall_grass') flatScenery.push(sprite);
       else tallScenery.push(sprite);
@@ -543,36 +563,27 @@ export function createRenderer(canvas, world, camera, view) {
       ...crops(), ...buildings(), ...villagersOnMap.filter(sprite => sprite.entity.id !== view.drag?.id),
       ...animals.filter(sprite => !overCanopy(sprite) && !sprite.aquatic?.submerged), ...collectibles()];
     for (const sprite of flatScenery) paintSprite(sprite, bounds);
-    for (const sprite of animals) if (sprite.bird) drawContactShadow(sprite, sprite.bird, '#1b1926');
+    for (const sprite of animals) if (sprite.bird) drawContactShadow(sprite, sprite.bird, '#1b1926', atmosphere.shadow);
     const terrainEffects = world.groundParticles.map(particle => ({ particle, depth: particle.groundY, x: particle.x }));
     for (const item of [...entities, ...terrainEffects].sort((a, b) => a.depth - b.depth || a.x - b.x)) {
       if (item.particle) drawGroundParticle(item.particle);
       else {
-        if (item.ground) drawContactShadow(item, item.ground, '#302a23');
+        if (item.ground) drawContactShadow(item, item.ground, '#302a23', atmosphere.shadow);
         paintSprite(item, bounds);
       }
     }
-    for (const sprite of foreground) drawImage(
-      image(`canopy:${sprite.asset.id}`, () => assets.canopySvg(sprite.asset.id)), sprite.x, sprite.y,
-    );
+    for (const sprite of foreground) {
+      drawSway(image(`canopy:${sprite.asset.id}`, () => assets.canopySvg(sprite.asset.id)), sprite);
+    }
     drawEffects(bounds);
     drawShoreRipples();
     drawFishParticles(true);
     for (const sprite of animals) if (overCanopy(sprite)) paintSprite(sprite, bounds);
-    const atmosphere = computeAtmosphere(state.time.minutes, state.weather.current);
-    if (atmosphereVeil) {
-      const nextVeil = atmosphere.overlayStyle || 'transparent';
-      if (lastVeilStyle !== nextVeil) {
-        lastVeilStyle = nextVeil;
-        atmosphereVeil.style.backgroundColor = nextVeil;
-      }
-    } else {
-      drawAtmosphereOverlay(context, width, height, atmosphere);
-      context.setTransform(camera.zoom * scale, 0, 0, camera.zoom * scale, camera.x * scale, camera.y * scale);
-    }
+    drawCloudShadows(context, map, bounds, atmosphere, state.time.seconds);
+    drawWeatherParticles(context, map, bounds, atmosphere, state.time.seconds);
+    drawAtmosphereOverlay(context, width, height, atmosphere);
     drawNightLights(context, world, atmosphere, bounds);
     drawRain(context, width, height, state.time.seconds, scale, atmosphere);
-    context.setTransform(camera.zoom * scale, 0, 0, camera.zoom * scale, camera.x * scale, camera.y * scale);
     if (state.abilities.fish) {
       const wave = assets.registry.get('icon_arrowD');
       for (const spot of map.fishingSpots) {
@@ -606,8 +617,10 @@ export function createRenderer(canvas, world, camera, view) {
   }
 
   function hasPixel(sprite, position) {
-    const x = Math.floor(position.x - sprite.x);
     const y = Math.floor(position.y - sprite.y);
+    const band = Math.floor(sprite.height / 3);
+    const shift = !sprite.sway ? 0 : y < band ? sprite.sway : y < 2 * band ? Math.trunc(sprite.sway / 2) : 0;
+    const x = Math.floor(position.x - sprite.x - shift);
     if (x < 0 || y < 0 || x >= sprite.width || y >= sprite.height) return false;
     if (!hitMasks.has(sprite.image)) {
       maskCanvas.width = sprite.width;

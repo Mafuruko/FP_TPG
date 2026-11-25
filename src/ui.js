@@ -1,4 +1,5 @@
 import { describeInteraction } from './assets.js';
+import { sampleWeather, timePeriod, weatherId, weatherProfiles } from './climate.js';
 import { tileToWorld, walkable, worldToTile } from './geometry.js';
 import { debugOptions, svgUrl } from './render.js';
 import { abilities } from './world.js';
@@ -7,6 +8,7 @@ import { needStatus, skillProgress, villagerQuirks, villagerSkills } from './vil
 import { bindSmartTooltips } from './tooltips.js';
 import { createHudWindowManager } from './hud-windows.js';
 import { renderDevActionsHtml, runDevAction } from './dev-tools.js';
+import { createMusicPlayer } from './music.js';
 
 const element = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char =>
@@ -86,7 +88,7 @@ function formatClockTime(minutes) {
 
 export function musicTrack({ time, weather }) {
   if (time.paused) return 'menu';
-  if (weather.current === 'rain') return 'rain';
+  if (sampleWeather(weather, time.seconds).rain >= 0.12) return 'rain';
   return time.minutes >= 360 && time.minutes < 1140 ? 'daytime' : 'nighttime';
 }
 
@@ -101,7 +103,6 @@ export function createUI(world, view, actions) {
   const hudWindowsLayer = element('hud-windows');
   const debugPanel = element('debug-panel');
   const title = element('title-screen');
-  const audio = new Audio();
   let storage = null;
   try { storage = window.localStorage; } catch { /* Ignore storage unavailability. */ }
   const preferences = readAudioSettings();
@@ -121,10 +122,6 @@ export function createUI(world, view, actions) {
   let devTab = 'actions';
   let devActionPage = 0;
   let noticeTimer;
-  let track = null;
-  let autoplayBlocked = false;
-  let playbackFailed = false;
-  let pendingPlay = null;
   let lastClockVisualKey = null;
   let lastClockDay = null;
   let lastClockMinute = null;
@@ -135,8 +132,10 @@ export function createUI(world, view, actions) {
   const menuHistory = [];
   const notes = [];
   let lastRevision;
-  audio.loop = true;
-  audio.volume = state.settings.musicVolume / 100;
+  const music = createMusicPlayer({
+    volume: state.settings.musicVolume / 100,
+    onError: () => notify('Music could not start in this browser.'),
+  });
 
   const resources = [
     ['food', 'Food', 'resource_berries'], ['wood', 'Wood', 'resource_wood_log'],
@@ -144,7 +143,8 @@ export function createUI(world, view, actions) {
   ].map(([id, tip, assetId]) => ({ id, tip, assetId, icon: !assetId && 'knowledge', warn: -1 }));
   const hudState = () => ({
     screen: menu, res: state.resources, day: state.time.day, hour: (Math.floor(state.time.minutes) + 0.00001) / 60,
-    weather: state.weather.current, speed: state.time.paused ? 0 : state.time.speed,
+    weather: weatherId(state.weather.current), weatherLabel: weatherProfiles[weatherId(state.weather.current)].label,
+    period: timePeriod(state.time.minutes), speed: state.time.paused ? 0 : state.time.speed,
     pop: state.villagers.length, popMax: state.world.populationCapacity, toasts: [],
   });
   GameUI.A = (kind, id, options = {}) => {
@@ -264,39 +264,18 @@ export function createUI(world, view, actions) {
     }
   }
 
-  function syncMusic(fromGesture = false) {
-    if ((autoplayBlocked || playbackFailed) && !fromGesture) return;
-    const next = musicTrack(state);
-    if (next === track && (pendingPlay || !audio.paused)) return;
-    autoplayBlocked = false;
-    playbackFailed = false;
-    if (track !== next) {
-      track = next;
-      audio.src = `/assets/music/${next}-music.mp3`;
-    }
-    const attempt = audio.play();
-    pendingPlay = attempt;
-    function finish(error) {
-      if (pendingPlay !== attempt) return;
-      pendingPlay = null;
-      if (error?.name === 'NotAllowedError') autoplayBlocked = true;
-      else if (error && error.name !== 'AbortError') {
-        playbackFailed = true;
-        track = null;
-        notify('Music could not start in this browser.');
-      }
-    }
-    attempt.then(() => finish(), finish);
+  function syncMusic() {
+    music.select(musicTrack(state));
   }
 
   function setVolume(volume) {
     state.settings.musicVolume = clampMusicVolume(volume);
-    audio.volume = state.settings.musicVolume / 100;
+    music.setVolume(state.settings.musicVolume / 100);
     refreshMusicControls();
   }
 
   function startMusic(event) {
-    if (event.isTrusted && (autoplayBlocked || playbackFailed)) syncMusic(true);
+    if (event.isTrusted) music.retry();
   }
   window.addEventListener('click', startMusic);
   window.addEventListener('keydown', startMusic);
@@ -313,11 +292,11 @@ export function createUI(world, view, actions) {
   function refreshStatus() {
     const { time, weather } = state;
     const wholeMinute = Math.floor(time.minutes);
-    const isDay = wholeMinute >= 360 && wholeMinute < 1140;
-    const visualKey = `${isDay ? 'd' : 'n'}|${weather.current}`;
+    const visualKey = `${timePeriod(time.minutes)}|${weather.current}`;
     const speed = time.paused ? 0 : time.speed;
+    syncMusic();
 
-    // Only rebuild the timeBox SVG DOM when Day/Night or Clear/Rain actually changes.
+    // Rebuild the clock artwork only when the period or weather label changes.
     if (visualKey !== lastClockVisualKey) {
       lastClockVisualKey = visualKey;
       lastClockDay = time.day;
@@ -326,7 +305,6 @@ export function createUI(world, view, actions) {
       clock.innerHTML = timeBox(hudState());
       timePanel.firstElementChild.replaceWith(clock.firstElementChild);
       bindClockNodes();
-      syncMusic();
       hudWindows.syncWidget('clock');
     } else if (wholeMinute !== lastClockMinute || time.day !== lastClockDay) {
       // Fast zero-reflow in-place text update on normal minute ticks.

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createAssets } from '../src/assets.js';
 import { readStudioModules } from '../tools/studios.js';
-import { createWorld } from '../src/world.js';
+import { createWorld, updateWorld } from '../src/world.js';
 import { startGameplay } from '../src/gameplay.js';
 import { needStatus, skillProgress } from '../src/villagers.js';
 import { classifyWheelEvent, createCameraController, wheelZoomFactor } from '../src/camera-controls.js';
@@ -16,8 +16,10 @@ import {
   readHudLayout,
   saveHudLayout,
 } from '../src/hud-windows.js';
-import { blendAtmosphereOverlay, computeAtmosphere } from '../src/atmosphere.js';
+import { computeAtmosphere } from '../src/atmosphere.js';
+import { createClimate, sampleWeather, WEATHER_CONFIG } from '../src/climate.js';
 import { runDevAction } from '../src/dev-tools.js';
+import { restoreVillage } from '../src/save.js';
 
 const { uiCss: _uiCss, ...modules } = await readStudioModules();
 const studios = Object.fromEntries(await Promise.all(Object.entries(modules).map(async ([key, code]) => [
@@ -141,32 +143,84 @@ test('HUD window geometry clamps inside viewport, enforces minimum size, and mer
   assert.deepEqual(restored.find(g => g.id === 'grp-clock').tabs, ['clock', 'camera']);
 });
 
-test('atmosphere math smoothly darkens night, tints dawn/dusk, and flags rain overcast', () => {
+test('ambient lighting blends color stops, moves sun shadows, and fades lamps around twilight', () => {
   const noon = computeAtmosphere(720, 'clear');
-  const dawn = computeAtmosphere(375, 'clear');
-  const dusk = computeAtmosphere(1125, 'clear');
+  const dawn = computeAtmosphere(355, 'clear');
+  const morning = computeAtmosphere(520, 'clear');
+  const sunset = computeAtmosphere(1065, 'clear');
+  const dusk = computeAtmosphere(1190, 'clear');
   const midnight = computeAtmosphere(0, 'clear');
-  const rainyDay = computeAtmosphere(720, 'rain');
-
-  assert.equal(noon.phase, 'day');
-  assert.equal(noon.nightAlpha, 0);
-  assert.equal(noon.lampGlow, 0);
-
-  assert.equal(dawn.phase, 'dawn');
-  assert.ok(dawn.twilightAlpha > 0.1);
-
-  assert.equal(dusk.phase, 'dusk');
-  assert.ok(dusk.twilightAlpha > 0.1);
-
-  assert.equal(midnight.phase, 'night');
-  assert.ok(midnight.nightAlpha >= 0.5);
-  assert.ok(midnight.lampGlow > 0.9);
-
-  assert.equal(rainyDay.isRain, true);
-  assert.ok(rainyDay.overcastAlpha > 0.1);
+  const rainyDay = computeAtmosphere(720, 'heavy_rain');
+  assert.equal(noon.phase, 'noon');
+  assert.deepEqual(noon.ambient, [255, 255, 255]);
   assert.equal(noon.overlayStyle, null);
-  assert.match(blendAtmosphereOverlay(midnight), /^rgba\(/);
-  assert.match(blendAtmosphereOverlay(rainyDay), /^rgba\(/);
+  assert.equal(noon.lampGlow, 0);
+  assert.equal(dawn.phase, 'dawn');
+  assert.ok(dawn.lampGlow > 0 && dawn.lampGlow < 1);
+  assert.equal(morning.phase, 'morning');
+  assert.equal(sunset.phase, 'sunset');
+  assert.ok(sunset.ambient[0] > sunset.ambient[1] && sunset.ambient[1] > sunset.ambient[2]);
+  assert.equal(dusk.phase, 'dusk');
+  assert.ok(dusk.ambient[2] > dusk.ambient[0]);
+  assert.ok(dusk.lampGlow > 0 && dusk.lampGlow < 1);
+  assert.equal(midnight.phase, 'night');
+  assert.equal(midnight.lampGlow, 1);
+  assert.deepEqual(computeAtmosphere(1439.99, 'clear').ambient, midnight.ambient);
+  assert.ok(morning.shadow.x < 0 && sunset.shadow.x > 0);
+  assert.ok(midnight.shadow.opacity < noon.shadow.opacity);
+  assert.ok(rainyDay.ambient[0] < rainyDay.ambient[2] && rainyDay.ambient[2] < 255);
+});
+
+test('the clock and weather blends follow simulation speeds, emit events, and survive save restore', () => {
+  const world = createWorld(assets);
+  const { time, weather } = world.state;
+  const events = [];
+  world.climate.subscribe('on_time_period_changed', event => events.push(event));
+  world.climate.subscribe('on_weather_changed', event => events.push(event));
+  world.climate.setClock(1439);
+  for (const speed of [0, 1, 2, 3]) {
+    time.speed = speed;
+    const start = time.seconds;
+    updateWorld(world, 0.4);
+    assert.ok(Math.abs(time.seconds - start - 0.4 * speed) < 0.001);
+  }
+  assert.equal(time.day, 2);
+  assert.ok(Math.abs(time.minutes - 11) < 0.001);
+  world.climate.setWeather('heavy_rain');
+  assert.equal(sampleWeather(weather, time.seconds).rain, 0);
+  updateWorld(world, 1);
+  const mid = sampleWeather(weather, time.seconds);
+  assert.ok(mid.rain > 0.4 && mid.rain < 0.6);
+  time.paused = true;
+  updateWorld(world, 2);
+  assert.deepEqual(sampleWeather(weather, time.seconds), mid);
+  const loaded = createWorld(assets);
+  assert.ok(restoreVillage(loaded, { state: structuredClone(world.state) }));
+  assert.deepEqual(sampleWeather(loaded.state.weather, loaded.state.time.seconds), mid);
+  world.climate.setWeather('cloudy');
+  assert.deepEqual(sampleWeather(weather, time.seconds), mid);
+  time.paused = false;
+  updateWorld(world, 3);
+  assert.equal(sampleWeather(weather, time.seconds).rain, 0);
+  assert.equal(sampleWeather(weather, time.seconds).cloud, 0.52);
+  assert.deepEqual(events, [
+    { from: 'morning', to: 'night' }, { from: 'clear', to: 'heavy_rain' }, { from: 'heavy_rain', to: 'cloudy' },
+  ]);
+});
+
+test('natural weather follows the schedule and legacy rain keeps its visual intensity', () => {
+  const state = { time: { minutes: 720, seconds: 0, day: 1 }, weather: { current: 'rain' } };
+  const climate = createClimate(state, undefined, {
+    ...WEATHER_CONFIG, holdMinutes: { ...WEATHER_CONFIG.holdMinutes, light_rain: [40, 40] },
+    probabilities: { ...WEATHER_CONFIG.probabilities, light_rain: { heavy_rain: 1 } },
+  });
+  climate.reset();
+  assert.equal(sampleWeather(state.weather, 0).rain, 0.46);
+  climate.advance(1);
+  climate.advance(8);
+  assert.equal(state.weather.current, 'heavy_rain');
+  assert.equal(sampleWeather(state.weather, 9).rain, 0.46);
+  assert.equal(sampleWeather(state.weather, 15.4).rain, 1);
 });
 
 test('Dev Mode actions trigger time, weather, resources, skills, landmarks, and collectibles', () => {
@@ -178,7 +232,7 @@ test('Dev Mode actions trigger time, weather, resources, skills, landmarks, and 
   assert.equal(world.state.time.minutes, 0);
 
   assert.equal(runDevAction('weather-rain', world, view).ok, true);
-  assert.equal(world.state.weather.current, 'rain');
+  assert.equal(world.state.weather.current, 'light_rain');
 
   assert.equal(runDevAction('res-all', world, view).ok, true);
   assert.equal(world.resources.get('wood'), 50);
