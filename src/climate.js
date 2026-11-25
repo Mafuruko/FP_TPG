@@ -111,7 +111,13 @@ export function createClimate(state, clock = CLOCK_CONFIG, tuning = WEATHER_CONF
     weather.current = weatherId(weather.current);
     if (!Number.isFinite(weather.nextAt)) schedule();
     if (time.seconds < weather.nextAt) return;
-    const choices = Object.entries(tuning.probabilities[weather.current]);
+    let choices = Object.entries(tuning.probabilities[weather.current]);
+    const tutorialCalm = Boolean(state.worldFlags && state.abilities
+      && !(state.abilities.heal && (state.story?.firstCureDone || state.worldFlags.restore_garden)));
+    if (tutorialCalm) {
+      const calmChoices = choices.filter(([id]) => id === 'clear' || id === 'cloudy');
+      choices = calmChoices.length ? calmChoices : [['clear', 1]];
+    }
     let roll = random() * choices.reduce((total, [, weight]) => total + weight, 0);
     const [next] = choices.find(([, weight]) => (roll -= weight) < 0) ?? choices.at(-1);
     if (next === weather.current) schedule();

@@ -1,9 +1,57 @@
 import { initializeWorldWildlife, updateWorld } from './world.js';
+import { ensureStoryState } from './story.js';
 
 const key = 'island-colony.village.v1';
 export const offlineLimit = 90;
 export const islandSlots = [1, 2, 3];
 const slotKey = id => `island-colony.slot.${id}.v1`;
+
+export const UNLOCKS_STORAGE_KEY = 'island-colony.unlocks.v1';
+
+export const WIPE_STORAGE_KEYS = [
+  key,
+  ...islandSlots.map(slotKey),
+  'island-colony.hud-layout.v1',
+  'island-colony.settings.v1',
+  'island-colony.audio',
+  UNLOCKS_STORAGE_KEY,
+];
+
+export function loadUnlocks(storage) {
+  try {
+    const raw = JSON.parse(storage?.getItem(UNLOCKS_STORAGE_KEY) || 'null');
+    return { devMode: Boolean(raw?.devMode) };
+  } catch {
+    return { devMode: false };
+  }
+}
+
+export function saveUnlocks(storage, unlocks) {
+  try {
+    storage?.setItem(UNLOCKS_STORAGE_KEY, JSON.stringify({ devMode: Boolean(unlocks?.devMode) }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Clears all saved islands, legacy backups, HUD layout, and saved preferences
+ * so testing or starting over begins from the pristine initial game state.
+ */
+export function wipeAllGameData(storage) {
+  if (!storage || typeof storage.removeItem !== 'function') {
+    return { ok: false, clearedKeys: [] };
+  }
+  const clearedKeys = [];
+  for (const storageKey of WIPE_STORAGE_KEYS) {
+    try {
+      storage.removeItem(storageKey);
+      clearedKeys.push(storageKey);
+    } catch { /* Keep clearing remaining keys even if one fails. */ }
+  }
+  return { ok: clearedKeys.length > 0, clearedKeys };
+}
 
 function validVillage(save, { map, assets }) {
   const state = save?.state;
@@ -107,6 +155,7 @@ export function restoreVillage(world, save) {
     if (!Object.hasOwn(save.state, field)) delete world.state[field];
   }
   Object.assign(world.state, save.state, { resources });
+  ensureStoryState(world.state);
   world.climate.reset();
   world.fishParticles = [];
   world.groundParticles = [];

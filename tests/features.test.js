@@ -4,7 +4,7 @@ import { createAssets } from '../src/assets.js';
 import { readStudioModules } from '../tools/studios.js';
 import { createWorld, updateIslandPreview, updateWorld } from '../src/world.js';
 import { startGameplay } from '../src/gameplay.js';
-import { needStatus, skillProgress } from '../src/villagers.js';
+import { needStatus, recolorSvgToGold, skillProgress } from '../src/villagers.js';
 import { classifyWheelEvent, createCameraController, wheelZoomFactor } from '../src/camera-controls.js';
 import { computeTooltipPosition } from '../src/tooltips.js';
 import {
@@ -19,8 +19,9 @@ import {
 import { computeAtmosphere } from '../src/atmosphere.js';
 import { createClimate, sampleWeather, WEATHER_CONFIG } from '../src/climate.js';
 import { runDevAction } from '../src/dev-tools.js';
-import { createIslandSaves, readVillage, restoreVillage, saveVillage } from '../src/save.js';
+import { createIslandSaves, loadUnlocks, readVillage, restoreVillage, saveUnlocks, saveVillage, WIPE_STORAGE_KEYS, wipeAllGameData } from '../src/save.js';
 import { loadPreferences, storePreferences } from '../src/preferences.js';
+import { buildEventSequence, FEATURE_GUIDES, getActiveChapter, getSurvivalStage, STORY_CHAPTERS, STORY_CONFIG } from '../src/story.js';
 
 const { uiCss: _uiCss, ...modules } = await readStudioModules();
 const studios = Object.fromEntries(await Promise.all(Object.entries(modules).map(async ([key, code]) => [
@@ -320,4 +321,268 @@ test('Dev Mode actions trigger time, weather, resources, skills, landmarks, and 
 
   assert.equal(runDevAction('prog-discover-all', world, view).ok, true);
   assert.ok(Object.values(world.state.collectionProgress).every(entry => entry.discovered));
+});
+
+test('guided story chapters swap vivid shortTitles, omit speaker labels, and support interactive waitFor steps', () => {
+  const world = createWorld(assets);
+  startGameplay(world);
+
+  // Swapped vivid shortTitle vs concise title across all 12 chapters.
+  assert.equal(STORY_CHAPTERS[0].shortTitle, 'Spark of Survival');
+  assert.equal(STORY_CHAPTERS[0].title, 'Light the Campfire');
+  const garden = STORY_CHAPTERS.find(c => c.id === 'ch5_garden');
+  assert.equal(garden.shortTitle, 'Revive the Overgrown Garden');
+  assert.equal(garden.title, 'Restore Garden');
+
+  // Initial chapter directs the player to gather wood and light the campfire.
+  const first = getActiveChapter(world);
+  assert.equal(first.chapter.id, 'ch1_campfire');
+  assert.ok(Number.isFinite(first.target.position.x) && Number.isFinite(first.target.position.y));
+
+  // Once campfire is lit, chapter advances to clearing the spring.
+  world.state.worldFlags.light_campfire = true;
+  const second = getActiveChapter(world);
+  assert.equal(second.chapter.id, 'ch2_spring');
+  assert.equal(second.completedCount, 1);
+
+  // All 12 feature guides exist with 3 steps each.
+  assert.ok(FEATURE_GUIDES.length >= 12);
+  assert.ok(FEATURE_GUIDES.every(guide => guide.steps.length === 3));
+
+  // Zero speaker properties on any event beat, and interactive waitFor on arrival tutorial.
+  const intro = buildEventSequence('intro_arrival', {}, world);
+  assert.equal(intro.beats.length, 3);
+  assert.equal(intro.pauseWorld, false);
+  assert.equal(typeof intro.beats[0].waitFor, 'function');
+  assert.equal(intro.beats[0].dragFrom, 'adult');
+  for (const evId of ['intro_arrival', 'first_illness', 'first_sickness_death', 'first_starvation_death', 'first_old_age_death', 'first_birth', 'colony_lost']) {
+    const seq = buildEventSequence(evId, { villager: world.state.villagers[0], baby: world.state.villagers[0] }, world);
+    assert.ok(seq.beats.every(beat => beat.speaker === undefined), `${evId} must not include speaker`);
+  }
+
+  const reveal = buildEventSequence('landmark_reveal', { puzzleId: 'light_campfire' }, world);
+  assert.equal(reveal.beats.length, 2);
+  assert.match(reveal.beats[1].title, /Spring/);
+});
+
+test('camera controller smoothly pans to a world target and cancels on manual input', () => {
+  const camera = { x: 0, y: 0, zoom: 1 };
+  const ctrl = createCameraController(camera);
+  let completed = false;
+  assert.equal(ctrl.panTo({ x: 400, y: 300 }, 2.5, { x: 640, y: 360 }, {
+    duration: 1.0,
+    onComplete: () => { completed = true; },
+  }), true);
+  assert.equal(ctrl.isPanning(), true);
+  ctrl.update(0.5);
+  assert.ok(camera.zoom > 1.2 && camera.zoom < 2.3);
+  assert.equal(completed, false);
+  ctrl.update(0.6);
+  assert.equal(completed, true);
+  assert.equal(ctrl.isPanning(), false);
+  assert.ok(Math.abs(camera.zoom - 2.5) < 0.001);
+
+  // Manual pan cancels active programmatic pan.
+  ctrl.panTo({ x: 100, y: 100 }, 1.5, { x: 640, y: 360 }, { duration: 1.0 });
+  assert.equal(ctrl.isPanning(), true);
+  ctrl.panBy(10, 5);
+  assert.equal(ctrl.isPanning(), false);
+});
+
+test('sickness drains health faster in rain, kills untreated villagers, creates memorials, and supports mourning', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const events = [];
+  game.subscribeEvents(ev => events.push(ev));
+
+  // Explicit lethal sickness drains faster in heavy rain and creates a memorial when untreated.
+  const victim = world.state.villagers[0];
+  game.inflictIllness(victim, 'fever', true, { tutorialSafe: false });
+  assert.ok(events.some(ev => ev.type === 'illness' && ev.villager.id === victim.id));
+  const hpClearStart = victim.needs.health;
+  updateWorld(world, 3);
+  const clearLoss = hpClearStart - victim.needs.health;
+  assert.ok(clearLoss > 0.7);
+
+  world.state.weather = { current: 'heavy_rain' };
+  const hpRainStart = victim.needs.health;
+  updateWorld(world, 3);
+  const rainLoss = hpRainStart - victim.needs.health;
+  assert.ok(rainLoss > clearLoss * 1.8);
+
+  for (let i = 0; i < 420 && world.state.villagers.some(v => v.id === victim.id); i++) {
+    updateWorld(world, 0.5);
+  }
+  assert.equal(world.state.villagers.some(v => v.id === victim.id), false);
+  assert.equal(world.state.graves.length, 1);
+  assert.equal(world.state.graves[0].cause, 'sickness');
+  assert.ok(events.some(ev => ev.type === 'death' && ev.cause === 'sickness'));
+
+  // Surviving villager can pay respects at the memorial cairn to restore energy & health.
+  const mourner = world.state.villagers[0];
+  mourner.needs.energy = 60;
+  mourner.needs.health = 75;
+  const grave = world.state.graves[0];
+  assert.equal(game.drop(mourner, grave.tile, { kind: 'grave', id: grave.id }), null);
+  for (let i = 0; i < 40 && grave.tendedCount === 0; i++) updateWorld(world, 0.2);
+  assert.equal(grave.tendedCount, 1);
+  assert.ok(mourner.needs.energy > 60);
+  assert.ok(mourner.needs.health > 75);
+});
+
+test('staged tutorial protects new saves from harsh sickness, rain, and early starvation until ready', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+
+  // Stage 0: No random sickness or fatal starvation during early tutorial.
+  assert.equal(getSurvivalStage(world), 0);
+  world.resources.remove('food', world.resources.get('food'));
+  world.state.villagers[0].needs.hunger = 5;
+  world.state.villagers[0].needs.health = 30;
+  for (let i = 0; i < 120; i++) updateWorld(world, 1);
+  assert.equal(world.state.villagers.length, 5);
+  assert.equal(world.state.villagers.some(v => Boolean(v.illness)), false);
+  assert.ok(world.state.villagers[0].needs.health >= STORY_CONFIG.tutorialStarvationFloor);
+
+  // Stage 1: Once campfire + spring are complete and >=10 Knowledge earned, one gentle guided illness triggers.
+  world.state.worldFlags.light_campfire = true;
+  world.state.worldFlags.unblock_spring = true;
+  world.resources.add('knowledge', 10);
+  assert.equal(getSurvivalStage(world), 1);
+  updateWorld(world, 0.5);
+  const sick = world.state.villagers.find(v => v.illness);
+  assert.ok(sick && sick.illness.tutorialSafe === true);
+
+  // Gentle guided illness never kills the tutorial villager even after long wait.
+  for (let i = 0; i < 300; i++) updateWorld(world, 1);
+  assert.ok(world.state.villagers.includes(sick));
+  assert.ok(sick.needs.health >= STORY_CONFIG.tutorialIllnessFloor);
+});
+
+test('empty food causes real starvation death in Stage 2 and colony_lost triggers if all villagers perish', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const events = [];
+  game.subscribeEvents(ev => events.push(ev));
+
+  // Enable Stage 2 survival, drain food to 0, and starve a single remaining villager.
+  world.state.abilities.heal = true;
+  world.state.story.firstCureDone = true;
+  assert.equal(getSurvivalStage(world), 2);
+  world.resources.remove('food', world.resources.get('food'));
+  const survivor = world.state.villagers[0];
+  world.state.villagers = [survivor];
+  survivor.needs.hunger = 5;
+  survivor.needs.health = 15;
+  for (let i = 0; i < 80 && world.state.villagers.length > 0; i++) {
+    updateWorld(world, 0.5);
+  }
+  assert.equal(world.state.villagers.length, 0);
+  assert.ok(events.some(ev => ev.type === 'death' && ev.cause === 'starvation'));
+  assert.ok(events.some(ev => ev.type === 'colony_lost'));
+});
+
+test('exclusive challenges award Golden Villager skin, 10x Speed Champion promotion, and Dev Mode unlock', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const luna = world.state.villagers[0];
+
+  // Challenge 1: Lone Survivor (100 solo days) -> Golden skin recolor for that specific villager.
+  world.state.villagers = [luna];
+  world.state.challenges.soloVillagerId = luna.id;
+  world.state.challenges.lastCheckedDay = 1;
+  world.state.time.day = 101;
+  game.checkAchievements();
+  assert.equal(world.state.achievements.challenge_lone_survivor, true);
+  assert.equal(luna.special?.golden, true);
+  const sampleSvg = '<svg><rect fill="#3a6b8c"/><rect fill="#e8c39e"/></svg>';
+  const goldSvg = recolorSvgToGold(sampleSvg);
+  assert.notEqual(goldSvg, sampleSvg);
+  assert.match(goldSvg, /#[0-9a-f]{6}/);
+
+  // Challenge 3: Flawless Century (Day 100 with 0 deaths) -> unlocks Dev Mode and persists via saveUnlocks.
+  assert.equal(world.state.achievements.challenge_flawless_century, true);
+  const storage = browserStorage();
+  assert.equal(loadUnlocks(storage).devMode, false);
+  saveUnlocks(storage, { devMode: true });
+  assert.equal(loadUnlocks(storage).devMode, true);
+
+  // Challenge 2: Speedrun Legend (Monument restored in < 100 days) -> promotes chosen villager to Max Stats + 10x Speed.
+  const world2 = createWorld(assets);
+  const game2 = startGameplay(world2);
+  world2.state.time.day = 42;
+  world2.state.worldFlags.restore_monument = true;
+  game2.checkAchievements();
+  assert.equal(world2.state.achievements.challenge_speedrun, true);
+  const kai = world2.state.villagers[1];
+  assert.equal(game2.promoteChampion(kai.id), null);
+  assert.equal(kai.special?.champion, true);
+  assert.equal(skillProgress(kai, 'gathering').rank.name, 'Master');
+  assert.equal(skillProgress(kai, 'healing').level, 10);
+
+  // Verify 10x movement speed on Champion vs normal villager.
+  const normal = world2.state.villagers[0];
+  const camp = world2.map.objects.find(o => o.type === 'campfire_site');
+  const startNormalX = normal.position.x;
+  const startKaiX = kai.position.x;
+  game2.move(normal, { x: normal.tile.x + 4, y: normal.tile.y });
+  game2.move(kai, { x: kai.tile.x + 4, y: kai.tile.y });
+  updateWorld(world2, 0.25);
+  const distNormal = Math.abs(normal.position.x - startNormalX);
+  const distKai = Math.abs(kai.position.x - startKaiX);
+  assert.ok(distKai > distNormal * 4, `Expected Champion to move much faster (${distKai} vs ${distNormal})`);
+  assert.ok(camp);
+});
+
+test('Stop Moving freezes a villager for 20s and clears on pickup or timeout', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const luna = world.state.villagers[0];
+  game.move(luna, { x: luna.tile.x + 3, y: luna.tile.y });
+  assert.ok(luna.route.length > 0);
+
+  assert.equal(game.holdStill(luna), true);
+  const frozenPos = { ...luna.position };
+  assert.equal(luna.route.length, 0);
+  assert.equal(luna.animation, 'idle');
+  for (let i = 0; i < 10; i++) updateWorld(world, 0.5);
+  assert.deepEqual(luna.position, frozenPos);
+  assert.ok(luna.holdStillUntil > world.state.time.seconds);
+
+  // Picking up clears hold-still immediately.
+  world.heldVillager = luna.id;
+  updateWorld(world, 0.1);
+  assert.equal(luna.holdStillUntil, undefined);
+  world.heldVillager = null;
+
+  // Auto-expires after 20 seconds with no action.
+  game.holdStill(luna);
+  assert.ok(luna.holdStillUntil > world.state.time.seconds);
+  for (let i = 0; i < 42; i++) updateWorld(world, 0.5);
+  assert.equal(luna.holdStillUntil, undefined);
+});
+
+test('Dev Mode story triggers and wipeAllGameData reset all saved slots, layout, preferences, and unlocks', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const events = [];
+  game.subscribeEvents(ev => events.push(ev));
+  const view = { selectedVillager: world.state.villagers[0].id };
+
+  assert.equal(runDevAction('story-first-birth', world, view).ok, true);
+  assert.ok(events.some(ev => ev.type === 'birth'));
+  assert.equal(buildEventSequence('first_birth', events.find(ev => ev.type === 'birth'), world).beats.length, 1);
+
+  assert.equal(runDevAction('story-old-age-death', world, view).ok, true);
+  assert.ok(events.some(ev => ev.type === 'death' && ev.cause === 'old_age'));
+
+  // Populate every storage key and verify wipeAllGameData removes all of them cleanly.
+  const storage = browserStorage();
+  for (const storageKey of WIPE_STORAGE_KEYS) storage.setItem(storageKey, '{"dummy":1}');
+  const wipeResult = wipeAllGameData(storage);
+  assert.equal(wipeResult.ok, true);
+  assert.equal(wipeResult.clearedKeys.length, WIPE_STORAGE_KEYS.length);
+  for (const storageKey of WIPE_STORAGE_KEYS) {
+    assert.equal(storage.getItem(storageKey), null);
+  }
 });

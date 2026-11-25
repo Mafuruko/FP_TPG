@@ -12,12 +12,13 @@ export const HUD_CONFIG = {
 
 export const DEFAULT_HUD_LAYOUT = [
   { id: 'grp-resources', tabs: ['resources'], activeTab: 'resources', xPct: 0.8, yPct: 1.0, scale: 1, minimized: false },
+  { id: 'grp-quest', tabs: ['quest'], activeTab: 'quest', xPct: 35.8, yPct: 1.0, scale: 1, minimized: false },
   { id: 'grp-clock', tabs: ['clock'], activeTab: 'clock', xPct: 71.0, yPct: 1.0, scale: 1, minimized: false },
-  { id: 'grp-nav', tabs: ['nav'], activeTab: 'nav', xPct: 0.8, yPct: 13.5, scale: 1, minimized: false },
-  { id: 'grp-menu', tabs: ['menu'], activeTab: 'menu', xPct: 63.0, yPct: 16.5, scale: 1, minimized: false },
+  { id: 'grp-nav', tabs: ['nav'], activeTab: 'nav', xPct: 0.8, yPct: 15.0, scale: 1, minimized: false },
+  { id: 'grp-menu', tabs: ['menu'], activeTab: 'menu', xPct: 65.5, yPct: 19.5, scale: 1, minimized: false },
   { id: 'grp-selection', tabs: ['selection'], activeTab: 'selection', xPct: 35.0, yPct: 78.0, scale: 1, minimized: false },
   { id: 'grp-camera', tabs: ['camera'], activeTab: 'camera', xPct: 81.0, yPct: 87.0, scale: 1, minimized: false },
-  { id: 'grp-dev', tabs: ['dev'], activeTab: 'dev', xPct: 7.5, yPct: 13.5, scale: 1, minimized: false },
+  { id: 'grp-dev', tabs: ['dev'], activeTab: 'dev', xPct: 6.0, yPct: 15.5, scale: 1, minimized: false },
 ];
 
 export function cloneLayout(groups = DEFAULT_HUD_LAYOUT) {

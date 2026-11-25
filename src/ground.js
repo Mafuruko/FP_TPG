@@ -83,6 +83,11 @@ export function resolveVillagerSpacing(world, dt) {
   const positions = new Map(villagers.map(entity => [entity, groundPosition(entity)]));
   for (const [index, entity] of villagers.entries()) {
     const contact = groundContact(entity);
+    if (entity.holdStillUntil > world.state.time.seconds) {
+      contact.x = 0;
+      contact.y = 0;
+      continue;
+    }
     const origin = positions.get(entity);
     let x = 0;
     let y = 0;

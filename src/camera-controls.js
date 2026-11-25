@@ -11,6 +11,7 @@ export const CAMERA_CONFIG = {
   smoothRate: 14,
   snapEpsilon: 0.0008,
   mouseNotchMinDelta: 80,
+  defaultPanDuration: 1.0,
 };
 
 export function clampZoom(zoom, config = CAMERA_CONFIG) {
@@ -89,20 +90,61 @@ export function createCameraController(camera, config = CAMERA_CONFIG) {
     targetZoom: camera.zoom,
     anchor: null,
     active: false,
+    pan: null,
   };
+
+  function cancelPan() {
+    state.pan = null;
+  }
+
+  function isPanning() {
+    return Boolean(state.pan);
+  }
 
   function syncFromCamera() {
     state.targetZoom = clampZoom(camera.zoom, config);
     state.active = false;
     state.anchor = null;
+    state.pan = null;
   }
 
   function panBy(dx, dy) {
+    state.pan = null;
     camera.x += dx * config.panSpeed;
     camera.y += dy * config.panSpeed;
   }
 
+  function panTo(worldPos, targetZoom, screenCenter, options = {}) {
+    if (!worldPos || !screenCenter) return false;
+    const zoom = clampZoom(Number.isFinite(targetZoom) ? targetZoom : camera.zoom, config);
+    const duration = options.immediate ? 0 : Math.max(0, options.duration ?? config.defaultPanDuration);
+    state.active = false;
+    state.anchor = null;
+    state.targetZoom = zoom;
+    if (duration <= 0.001) {
+      camera.zoom = zoom;
+      camera.x = Math.round(screenCenter.x - worldPos.x * zoom);
+      camera.y = Math.round(screenCenter.y - worldPos.y * zoom);
+      state.pan = null;
+      options.onComplete?.();
+      return true;
+    }
+    const fromWorld = screenToWorld(screenCenter, camera);
+    state.pan = {
+      fromWorld,
+      toWorld: { x: worldPos.x, y: worldPos.y },
+      fromZoom: camera.zoom,
+      toZoom: zoom,
+      screenCenter: { x: screenCenter.x, y: screenCenter.y },
+      elapsed: 0,
+      duration,
+      onComplete: options.onComplete || null,
+    };
+    return true;
+  }
+
   function zoomByFactor(factor, screenPoint, immediate = false) {
+    state.pan = null;
     const base = state.active ? state.targetZoom : camera.zoom;
     const next = clampZoom(base * factor, config);
     if (immediate) {
@@ -143,7 +185,29 @@ export function createCameraController(camera, config = CAMERA_CONFIG) {
   }
 
   function update(dt) {
-    if (!state.active || !state.anchor || dt <= 0) return false;
+    if (dt <= 0) return false;
+    if (state.pan) {
+      const p = state.pan;
+      p.elapsed += dt;
+      const raw = Math.min(1, p.elapsed / p.duration);
+      const t = raw * raw * (3 - 2 * raw);
+      const zoom = p.fromZoom + (p.toZoom - p.fromZoom) * t;
+      const wx = p.fromWorld.x + (p.toWorld.x - p.fromWorld.x) * t;
+      const wy = p.fromWorld.y + (p.toWorld.y - p.fromWorld.y) * t;
+      camera.zoom = zoom;
+      camera.x = p.screenCenter.x - wx * zoom;
+      camera.y = p.screenCenter.y - wy * zoom;
+      state.targetZoom = zoom;
+      if (raw >= 1) {
+        camera.x = Math.round(camera.x);
+        camera.y = Math.round(camera.y);
+        const done = p.onComplete;
+        state.pan = null;
+        done?.();
+      }
+      return true;
+    }
+    if (!state.active || !state.anchor) return false;
     const diff = state.targetZoom - camera.zoom;
     if (Math.abs(diff) <= config.snapEpsilon) {
       zoomCameraAt(camera, state.anchor, state.targetZoom, config);
@@ -161,6 +225,9 @@ export function createCameraController(camera, config = CAMERA_CONFIG) {
     state,
     syncFromCamera,
     panBy,
+    panTo,
+    cancelPan,
+    isPanning,
     zoomByFactor,
     stepButtonZoom,
     handleWheel,

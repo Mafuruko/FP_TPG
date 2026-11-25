@@ -72,3 +72,63 @@ export function jobVisual(villager) {
   if (!work || work.phase === 'approach') return null;
   return jobSkill(villager, work.job);
 }
+
+const GOLD_RAMP = [
+  [0.0, [52, 34, 8]],
+  [0.18, [104, 68, 12]],
+  [0.42, [196, 138, 26]],
+  [0.68, [242, 198, 66]],
+  [0.88, [255, 232, 134]],
+  [1.0, [255, 249, 206]],
+];
+
+const toHexByte = value => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
+
+/**
+ * Pure math-based luminance-to-gold recolor for the Lone Survivor golden villager skin.
+ * Remaps every #RGB / #RRGGBB hex color onto a metallic gold gradient while preserving outlines.
+ */
+export function recolorSvgToGold(svg) {
+  if (!svg || typeof svg !== 'string') return svg;
+  return svg.replace(/#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/g, (_, hex) => {
+    const full = hex.length === 3 ? hex.split('').map(c => c + c).join('') : hex;
+    const r = parseInt(full.slice(0, 2), 16);
+    const g = parseInt(full.slice(2, 4), 16);
+    const b = parseInt(full.slice(4, 6), 16);
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    let lo = GOLD_RAMP[0];
+    let hi = GOLD_RAMP[GOLD_RAMP.length - 1];
+    for (let i = 0; i < GOLD_RAMP.length - 1; i++) {
+      if (lum >= GOLD_RAMP[i][0] && lum <= GOLD_RAMP[i + 1][0]) {
+        lo = GOLD_RAMP[i];
+        hi = GOLD_RAMP[i + 1];
+        break;
+      }
+    }
+    const span = Math.max(0.0001, hi[0] - lo[0]);
+    const t = Math.max(0, Math.min(1, (lum - lo[0]) / span));
+    const nr = lo[1][0] + (hi[1][0] - lo[1][0]) * t;
+    const ng = lo[1][1] + (hi[1][1] - lo[1][1]) * t;
+    const nb = lo[1][2] + (hi[1][2] - lo[1][2]) * t;
+    return `#${toHexByte(nr)}${toHexByte(ng)}${toHexByte(nb)}`;
+  });
+}
+
+/**
+ * Promotes a chosen villager into the Speedrun Champion (maxed skills, full needs, 10x speed).
+ */
+export function promoteToChampion(villager) {
+  if (!villager) return false;
+  villager.skills ??= {};
+  for (const def of Object.values(villagerSkills)) {
+    for (const job of def.jobs) {
+      villager.skills[job] = Math.max(villager.skills[job] || 0, 25);
+    }
+  }
+  villager.needs.health = 100;
+  villager.needs.hunger = 100;
+  villager.needs.energy = 100;
+  delete villager.illness;
+  villager.special = { ...(villager.special || {}), champion: true };
+  return true;
+}

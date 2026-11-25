@@ -150,3 +150,47 @@ Each entry lists the changes and the verification checks for that patch.
 3. Open **Collection Book** and verify the single-row 4-tab bar (`Shells`, `Minerals`, `Artifacts`, `Butterflies`), 5-column rarity grid, progress meter, and compact bottom detail card.
 4. Open **Achievements** and verify all 6 milestone cards with live color progress bars and zero scrollbars.
 5. Open **Villagers**, **Journal**, and **Dev Mode** and confirm no raw browser scrollbars appear anywhere.
+
+---
+
+## Patch 10 — Guided Story Progression, Real Survival Danger, Forced Life Events, and Data Wipe Reset
+**Files:** `src/story.js`, `src/story-ui.js`, `src/gameplay.js`, `src/camera-controls.js`, `src/render.js`, `src/ui.js`, `src/hud-windows.js`, `src/dev-tools.js`, `src/save.js`, `src/main.js`, `src/main-menu.js`, `src/world.js`, `index.html`, `game.css`, `tests/features.test.js`
+
+### Summary
+- Added a 12-chapter guided story progression engine (`src/story.js`) with a floating **Island Guide** HUD window, live requirement chips, urgent danger alerts, a **Show Me** camera pan button, and a 12-topic **Field Guide** menu.
+- Added smooth programmatic camera panning (`cameraController.panTo`) with pulsing pixel-art world beacons (`src/render.js`) and a cinematic **Story Director** chronicle overlay (`src/story-ui.js`) that pauses the world during beats and pans to every next landmark on completion.
+- Made sickness and starvation real survival hazards (`src/gameplay.js`): untreated fever drains health continuously, worsens in rain or hunger, spreads to nearby villagers, and kills villagers at 0 Health. Empty Food now drains health to 0 instead of stopping at 10.
+- Added persistent pixel-art **Memorial Cairns** (`state.graves`) when villagers die from sickness, starvation, or old age. Players can drop surviving villagers onto memorials to pay respects and restore Energy and Health.
+- Added forced first-time story and crisis events with camera pans and survival instructions for arrival, first illness, first sickness death, first starvation death, first old-age death, first birth, research unlocks, first collectible, and colony loss.
+- Added a **Wipe Data** reset utility (`wipeAllGameData`) in the bottom bar (2-click safety confirm), **Dev Mode → Story & Wipe**, **Pause → Save & Load**, and **Main Menu → Settings** to clear all save slots, HUD layout, and settings and restart from the initial state.
+
+### What to check
+1. Start a fresh island and verify the 3-beat **Washed Ashore** arrival cutscene pans across camp, the stone campfire ring, and the blocked spring.
+2. Check the **Island Guide** window at top-center, click **Show Me** to pan with a gold beacon, and click **Guide** to inspect all 12 **Field Guide** topics.
+3. Open **Island Journal** and click **Locate** on any landmark to confirm smooth camera panning and zero scrollbars.
+4. Open **Dev Mode → Story & Wipe** and test **1st Illness**, **Sickness Death**, **Old Age Death**, **1st Birth**, and **Empty Food (0)**. Confirm each event pans to the villager or memorial cairn and explains what to do next.
+5. Drag a surviving villager onto a **Memorial Cairn** and confirm **Pay Respects** restores Energy and Health and adds blossoms to the stone.
+6. Test **Wipe Data** from the bottom bar (click once to arm, click again to confirm), **Dev Mode → Wipe All Data**, **Save & Load**, or **Main Menu → Settings** to confirm all storage clears and a pristine island starts cleanly.
+7. Run `npm test` and confirm all 53 automated tests pass.
+
+---
+
+## Patch 11 — Action-First Tutorial, Staged Danger, Exclusive Challenges, and Easy Villager Grabbing
+**Files:** `src/story.js`, `src/story-ui.js`, `src/villagers.js`, `src/gameplay.js`, `src/climate.js`, `src/ground.js`, `src/world.js`, `src/render.js`, `src/save.js`, `src/ui.js`, `src/dev-tools.js`, `src/main.js`, `src/hud-windows.js`, `game.css`, `tests/features.test.js`
+
+### Summary
+- Swapped `title` and `shortTitle` across all 12 chapters (`ch1_campfire` to `ch12_endless`) in `src/story.js` so the **Guide** HUD displays vivid chapter names such as **Spark of Survival** and **Revive the Overgrown Garden**.
+- Removed every `speaker:` field from `buildEventSequence` in `src/story.js` and simplified the Story UI into a slim, action-first directive card with interactive `waitFor` steps, pulsing target circles, bouncing pointers, off-screen edge arrows, and animated villager-to-target drag arrows on the canvas.
+- Added staged survival safety (`getSurvivalStage`): Stage 0 blocks natural rainstorms, sickness, and fatal starvation during early onboarding; Stage 1 introduces one gentle, non-fatal guided illness only after the spring is clear and the player holds at least 10 Knowledge or Healing; Stage 2 enables full sickness lethality, contagion, storms, and famine after the first cure or garden restoration.
+- Expanded **Achievements** into **Milestones (9)** and **Challenges (3)** with rewards:
+  - **Lone Survivor** (survive 100 days with 1 villager) unlocks a math-based **Golden Villager** recolor (`recolorSvgToGold`) for that survivor.
+  - **Speedrun Legend** (restore the monument in under 100 days) lets the player promote any chosen villager to maxed Master Lv. 10 stats and 10x movement speed.
+  - **Flawless Century** (reach Day 100 with 0 deaths) permanently unlocks **Dev Mode** (`island-colony.unlocks.v1`; `?debug=1` remains available for developers).
+- Enlarged the villager pick hitbox (`villagerHitPadPx: 11`) in `src/render.js` and replaced the villager profile footer with a neat 3-column grid: **Stop Work**, **Stop Moving** (freezes the villager completely for 20s until grabbed or timed out), and **Find Me** (smoothly pans and zooms to the villager).
+
+### What to check
+1. Start a fresh island and confirm the **Guide** window shows vivid chapter titles and the compact bottom tutorial waits for your drag action while displaying a pulsing circle, pointer, and animated drag arrow.
+2. Confirm no early sickness, heavy rain, or fatal starvation happens before clearing the spring and earning 10 Knowledge.
+3. Select any villager, click **Stop Moving** to freeze them for 20 seconds, click **Find Me** to pan and zoom to them, grab them from the expanded hitbox, and verify the 3 action buttons share equal 1/3 widths.
+4. Open **Achievements → Challenges** and test **Solo 100d Gold**, **Speedrun <100d**, and **Flawless 100d** (via `?debug=1` → **Dev Mode → Story & Wipe**) to verify the Golden Villager recolor, the 10x Speed Champion promotion picker, and Dev Mode unlock.
+5. Run `npm test` and confirm all 56 automated tests pass.

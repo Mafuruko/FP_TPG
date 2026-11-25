@@ -1,6 +1,7 @@
 import { tileToWorld, walkable } from './geometry.js';
 import { landmarks, researchProjects } from './progression.js';
 import { initializeVillagerQuirks, villagerSkills } from './villagers.js';
+import { ensureStoryState, STORY_CONFIG } from './story.js';
 
 export const DEV_CONFIG = {
   resourceBurst: 25,
@@ -72,11 +73,29 @@ export const DEV_GROUPS = [
     ],
   },
   {
+    id: 'story',
+    title: 'Story, Events & Challenges',
+    actions: [
+      { id: 'story-intro', label: 'Intro Guide', tip: 'Replay the interactive arrival drag tutorial' },
+      { id: 'story-pan-next', label: 'Pan to Goal', tip: 'Pan the camera to the current objective landmark' },
+      { id: 'story-first-illness', label: '1st Illness', tip: 'Trigger the guided first-illness healing prompt' },
+      { id: 'story-sickness-death', label: 'Sickness Death', tip: 'Force a villager death from sickness with memorial' },
+      { id: 'story-old-age-death', label: 'Old Age Death', tip: 'Force an elder passing from old age with memorial' },
+      { id: 'story-first-birth', label: '1st Birth', tip: 'Force a newborn birth event and family guide' },
+      { id: 'story-starve', label: 'Empty Food (0)', tip: 'Drop Food to 0 and enable Stage 2 famine testing' },
+      { id: 'chal-solo-100', label: 'Solo 100d Gold', tip: 'Test Lone Survivor (100 solo days) and grant Golden skin' },
+      { id: 'chal-speedrun', label: 'Speedrun <100d', tip: 'Complete Monument before Day 100 to unlock Champion picker' },
+      { id: 'chal-flawless', label: 'Flawless 100d', tip: 'Reach Day 100 with 0 deaths to unlock Dev Mode' },
+    ],
+  },
+  {
     id: 'system',
-    title: 'System & HUD',
+    title: 'System & Data Reset',
     actions: [
       { id: 'sys-reset-hud', label: 'Reset HUD', tip: 'Reset all floating HUD windows to default layout' },
       { id: 'sys-open-journal', label: 'Open Journal', tip: 'Open the Island Journal landmark tracker' },
+      { id: 'sys-open-guide', label: 'Field Guide', tip: 'Open the illustrated Feature Guide reference' },
+      { id: 'sys-wipe-all', label: 'Wipe All Data', tip: 'Delete all saves, HUD layout, and settings and restart fresh' },
     ],
   },
 ];
@@ -192,13 +211,20 @@ export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CON
         villager.needs.health = 100;
         villager.needs.hunger = 100;
         villager.needs.energy = 100;
+        delete villager.illness;
       }
       return { ok: true, message: 'Dev: Restored all villager needs to 100%.' };
     case 'vil-sick': {
       const villager = targetVillager(world, view);
       if (!villager) return { ok: false, message: 'Dev: No villager available.' };
       villager.needs.health = 48;
-      return { ok: true, message: `Dev: ${villager.name} is now unwell (48% Health).` };
+      villager.illness = {
+        cause: 'fever',
+        startedAt: state.time.seconds,
+        nextContagionAt: state.time.seconds + STORY_CONFIG.contagionDelaySec,
+        criticalWarned: false,
+      };
+      return { ok: true, message: `Dev: ${villager.name} is now unwell (48% Health, active fever).` };
     }
     case 'vil-tired-hungry': {
       const villager = targetVillager(world, view);
@@ -315,12 +341,98 @@ export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CON
       return { ok: true, message: 'Dev: Discovered all 25 Collection Book items.' };
     }
 
+    case 'story-intro':
+      hooks.triggerStory?.('intro_arrival');
+      return { ok: true, message: 'Dev: Replaying arrival cutscene.' };
+    case 'story-pan-next':
+      hooks.panToObjective?.();
+      return { ok: true, message: 'Dev: Panning camera to current objective.' };
+    case 'story-first-illness': {
+      const story = ensureStoryState(state);
+      delete story.seenEvents.first_illness;
+      const victim = targetVillager(world, view);
+      if (!victim) return { ok: false, message: 'Dev: No villager available.' };
+      if (world.gameplay?.inflictIllness) world.gameplay.inflictIllness(victim, 'fever', true);
+      else {
+        victim.needs.health = STORY_CONFIG.illnessStartHealth;
+        victim.illness = { cause: 'fever', startedAt: state.time.seconds, nextContagionAt: state.time.seconds + STORY_CONFIG.contagionDelaySec };
+      }
+      return { ok: true, message: `Dev: Triggered First Illness crisis on ${victim.name}.` };
+    }
+    case 'story-sickness-death': {
+      const story = ensureStoryState(state);
+      delete story.seenEvents.first_sickness_death;
+      const victim = targetVillager(world, view);
+      if (!victim) return { ok: false, message: 'Dev: No villager available.' };
+      if (world.gameplay?.killVillager) world.gameplay.killVillager(victim, 'sickness');
+      return { ok: true, message: `Dev: Triggered Sickness Death event (${victim.name}).` };
+    }
+    case 'story-old-age-death': {
+      const story = ensureStoryState(state);
+      delete story.seenEvents.first_old_age_death;
+      const elder = state.villagers.find(v => v.lifeStage === 'elder') || targetVillager(world, view);
+      if (!elder) return { ok: false, message: 'Dev: No villager available.' };
+      elder.age = Math.max(elder.age, STORY_CONFIG.elderDeathAge);
+      elder.lifeStage = 'elder';
+      if (world.gameplay?.killVillager) world.gameplay.killVillager(elder, 'old_age');
+      return { ok: true, message: `Dev: Triggered Old Age passing event (${elder.name}).` };
+    }
+    case 'story-first-birth': {
+      const story = ensureStoryState(state);
+      delete story.seenEvents.first_birth;
+      const baby = world.gameplay?.triggerBirth?.();
+      if (!baby) return { ok: false, message: 'Dev: Need at least 2 villagers to trigger a birth.' };
+      if (state.villagers.length > state.world.populationCapacity) {
+        state.world.populationCapacity = state.villagers.length;
+      }
+      return { ok: true, message: `Dev: Triggered First Birth event (${baby.name}).` };
+    }
+    case 'story-starve': {
+      const currentFood = resources.get('food');
+      if (currentFood > 0) resources.remove('food', currentFood);
+      state.abilities.heal = true;
+      ensureStoryState(state).firstCureDone = true;
+      for (const v of state.villagers) v.needs.hunger = 15;
+      return { ok: true, message: 'Dev: Emptied Food to 0 (Stage 2 survival active).' };
+    }
+    case 'chal-solo-100': {
+      const chosen = targetVillager(world, view);
+      if (!chosen) return { ok: false, message: 'Dev: No villager available.' };
+      ensureStoryState(state);
+      state.villagers = [chosen];
+      state.challenges.soloVillagerId = chosen.id;
+      state.challenges.soloDays = STORY_CONFIG.soloChallengeDays;
+      state.challenges.lastCheckedDay = state.time.day;
+      world.gameplay?.checkAchievements?.();
+      return { ok: true, message: `Dev: ${chosen.name} completed Lone Survivor (100 solo days) — Golden skin unlocked!` };
+    }
+    case 'chal-speedrun': {
+      for (const id of Object.keys(landmarks)) completeLandmark(world, id);
+      if (state.time.day >= STORY_CONFIG.speedrunMaxDays) state.time.day = 50;
+      world.gameplay?.checkAchievements?.();
+      return { ok: true, message: 'Dev: Speedrun Legend unlocked! Open Achievements -> Challenges to promote a Champion.' };
+    }
+    case 'chal-flawless': {
+      const story = ensureStoryState(state);
+      story.deathCount = 0;
+      state.graves = [];
+      state.time.day = Math.max(state.time.day, STORY_CONFIG.flawlessTargetDay);
+      world.gameplay?.checkAchievements?.();
+      return { ok: true, message: 'Dev: Reached Day 100 with 0 deaths — Flawless Century & Dev Mode unlocked!' };
+    }
+
     case 'sys-reset-hud':
       hooks.resetHud?.();
       return { ok: true, message: 'Dev: Reset HUD window layout.' };
     case 'sys-open-journal':
       hooks.openMenu?.('journal');
       return { ok: true, message: 'Dev: Opened Island Journal.' };
+    case 'sys-open-guide':
+      hooks.openMenu?.('guide');
+      return { ok: true, message: 'Dev: Opened Field Guide.' };
+    case 'sys-wipe-all':
+      hooks.wipeAllData?.();
+      return { ok: true, message: 'Dev: Wiped all saved data and restarted fresh.' };
 
     default:
       return { ok: false, message: `Unknown dev action: ${actionId}` };
@@ -330,19 +442,21 @@ export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CON
 export function renderDevActionsHtml(page = 0) {
   const pages = [
     DEV_GROUPS.filter(g => g.id === 'atmosphere' || g.id === 'resources'),
-    DEV_GROUPS.filter(g => g.id === 'villagers' || g.id === 'progression' || g.id === 'system'),
+    DEV_GROUPS.filter(g => g.id === 'villagers' || g.id === 'progression'),
+    DEV_GROUPS.filter(g => g.id === 'story' || g.id === 'system'),
   ];
   const safePage = Math.max(0, Math.min(pages.length - 1, page));
   const groups = pages[safePage];
   return `<div class="pager-bar dev-subtabs">
-      <button type="button" class="gu-btn ${safePage === 0 ? 'g' : 's'} pager-btn" data-dev-page="0">World &amp; Supply</button>
-      <button type="button" class="gu-btn ${safePage === 1 ? 'g' : 's'} pager-btn" data-dev-page="1">Village &amp; Story</button>
+      <button type="button" class="gu-btn ${safePage === 0 ? 'g' : 's'} pager-btn" data-dev-page="0">World</button>
+      <button type="button" class="gu-btn ${safePage === 1 ? 'g' : 's'} pager-btn" data-dev-page="1">Village</button>
+      <button type="button" class="gu-btn ${safePage === 2 ? 'g' : 's'} pager-btn" data-dev-page="2">Story &amp; Wipe</button>
     </div>
     ${groups.map(group => `
     <div class="dev-group">
       <h4>${group.title}</h4>
       <div class="dev-btn-grid">
-        ${group.actions.map(action => `<button type="button" class="gu-btn s dev-btn" data-dev="${action.id}" data-tip="${action.tip}">${action.label}</button>`).join('')}
+        ${group.actions.map(action => `<button type="button" class="gu-btn ${action.id === 'sys-wipe-all' ? 'd' : 's'} dev-btn" data-dev="${action.id}" data-tip="${action.tip}">${action.label}</button>`).join('')}
       </div>
     </div>
   `).join('')}`;

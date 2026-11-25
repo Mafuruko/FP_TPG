@@ -6,13 +6,38 @@ import { dolphinVisuals } from './dolphin.js';
 import { fishVisuals, waterAt } from './fish.js';
 import { contactVisual, groundPosition, villagerFrame } from './ground.js';
 import { turtleVisuals } from './turtle.js';
-import { jobVisual } from './villagers.js';
+import { jobVisual, recolorSvgToGold } from './villagers.js';
 import { wildlifeOpacity } from './wildlife-director.js';
+import { findBestDragOrigin, STORY_CONFIG } from './story.js';
 
 export const RENDER_CONFIG = {
   maxDpr: 1.5,
   cullMarginPx: 64,
+  villagerHitPadPx: 11,
 };
+
+function memorialSvg(tended) {
+  const flowers = tended
+    ? '<rect x="3" y="13" width="2" height="2" fill="#e97f8d"/><rect x="11" y="13" width="2" height="2" fill="#f3d66d"/><rect x="7" y="14" width="2" height="1" fill="#7cb868"/>'
+    : '<rect x="4" y="14" width="2" height="1" fill="#5e7f4f"/>';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="18" viewBox="0 0 16 18" shape-rendering="crispEdges">
+    <rect x="2" y="13" width="12" height="4" fill="#3a2d24"/>
+    <rect x="3" y="12" width="10" height="4" fill="#7c7a74"/>
+    <rect x="4" y="13" width="8" height="2" fill="#9e9b93"/>
+    <rect x="4" y="4" width="8" height="9" fill="#3a2d24"/>
+    <rect x="5" y="3" width="6" height="1" fill="#3a2d24"/>
+    <rect x="5" y="4" width="6" height="9" fill="#9a9891"/>
+    <rect x="6" y="4" width="4" height="2" fill="#bebbb2"/>
+    <rect x="6" y="7" width="4" height="1" fill="#5c5952"/>
+    <rect x="6" y="9" width="3" height="1" fill="#5c5952"/>
+    <rect x="5" y="5" width="1" height="2" fill="#6b8f55"/>
+    <rect x="10" y="9" width="1" height="3" fill="#6b8f55"/>
+    ${flowers}
+  </svg>`;
+}
+
+const GRAVE_ASSET_PLAIN = { id: 'memorial_plain', width: 16, height: 18, anchor: { x: 8, y: 16 }, svg: () => memorialSvg(false) };
+const GRAVE_ASSET_TENDED = { id: 'memorial_tended', width: 16, height: 18, anchor: { x: 8, y: 16 }, svg: () => memorialSvg(true) };
 
 export const svgUrl = svg => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 export const debugOptions = {
@@ -103,7 +128,7 @@ export function createRenderer(canvas, world, camera, view) {
     const cfgKey = cfg
       ? `${cfg.seed ?? ''}_${cfg.lifeStage ?? ''}_${cfg.heldObject ?? ''}_${cfg.accessories ? cfg.accessories.join(',') : ''}`
       : '';
-    return `${asset.id}|${cfgKey}|${options.direction ?? ''}|${options.animation ?? ''}|${options.frame ?? ''}|${options.shadow ?? ''}|${options.rank ?? ''}`;
+    return `${asset.id}|${cfgKey}|${options.direction ?? ''}|${options.animation ?? ''}|${options.frame ?? ''}|${options.shadow ?? ''}|${options.rank ?? ''}|${options.golden ? 'gold' : ''}`;
   }
 
   function paintSprite(sprite, bounds) {
@@ -112,7 +137,7 @@ export function createRenderer(canvas, world, camera, view) {
       || x > bounds.right || y > bounds.bottom)) return;
     if (sprite.opacity === 0) return;
     const key = spriteCacheKey(asset, options);
-    const spriteImage = image(key, () => asset.svg(options));
+    const spriteImage = image(key, () => options?.golden ? recolorSvgToGold(asset.svg(options)) : asset.svg(options));
     const ready = isReady(spriteImage);
     const faded = sprite.opacity < 1;
     if (faded) context.globalAlpha = sprite.opacity;
@@ -225,7 +250,7 @@ export function createRenderer(canvas, world, camera, view) {
       const sprite = describeSprite(entity, assets.villager, {
         config, animation, direction: entity.direction,
         frame: villagerFrame(entity, definition.frameCount) ?? frameAt({ ...definition, fps }, state.time.seconds),
-        shadow: false, rank: tier,
+        shadow: false, rank: tier, golden: Boolean(entity.special?.golden),
       }, groundPosition(entity), 'villager');
       sprite.ground = contactVisual(entity, 'villager');
       sprite.y += sprite.ground.offsetY;
@@ -513,13 +538,9 @@ export function createRenderer(canvas, world, camera, view) {
     };
     const terrainSource = image('island', assets.terrain.svg);
     const terrainReady = isReady(terrainSource);
-    const fullyInsideMap = terrainReady && bounds.left >= 0 && bounds.top >= 0
-      && bounds.right <= pixelWidth && bounds.bottom <= pixelHeight;
-    if (!fullyInsideMap) {
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.fillStyle = '#3f7f9c';
-      context.fillRect(0, 0, width, height);
-    }
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.fillStyle = '#3f7f9c';
+    context.fillRect(0, 0, width, height);
     context.imageSmoothingEnabled = false;
     context.setTransform(camera.zoom * scale, 0, 0, camera.zoom * scale, camera.x * scale, camera.y * scale);
     if (terrainReady) {
@@ -560,8 +581,13 @@ export function createRenderer(canvas, world, camera, view) {
       paintSubmergedWildlife(sprite);
     }
     drawFishParticles(false);
+    const graves = (state.graves || []).map(grave => {
+      const asset = grave.tendedCount > 0 ? GRAVE_ASSET_TENDED : GRAVE_ASSET_PLAIN;
+      const pos = grave.position || tileToWorld(grave.tile, tileSize);
+      return describeSprite(grave, asset, null, pos, 'grave');
+    });
     const entities = [...tallScenery,
-      ...crops(), ...buildings(), ...villagersOnMap.filter(sprite => sprite.entity.id !== view.drag?.id),
+      ...crops(), ...buildings(), ...graves, ...villagersOnMap.filter(sprite => sprite.entity.id !== view.drag?.id),
       ...animals.filter(sprite => !overCanopy(sprite) && !sprite.aquatic?.submerged), ...collectibles()];
     for (const sprite of flatScenery) paintSprite(sprite, bounds);
     for (const sprite of animals) if (sprite.bird) drawContactShadow(sprite, sprite.bird, '#1b1926', atmosphere.shadow);
@@ -608,10 +634,182 @@ export function createRenderer(canvas, world, camera, view) {
     const object = world.objects.get(view.selectedObject);
     if (object) drawStudioMarker('marker_interactable', object.anchor || tileToWorld(object.standPosition, tileSize));
     for (const sprite of villagersOnMap) {
-      const reaction = sprite.entity.reaction;
-      if (sprite.entity.id !== view.drag?.id && reaction?.until > state.time.seconds) {
+      const v = sprite.entity;
+      if (v.id !== view.drag?.id && v.holdStillUntil > state.time.seconds) {
+        const cx = Math.round(sprite.position.x);
+        const cy = Math.round(sprite.position.y - 2);
+        context.save();
+        context.strokeStyle = '#3b281c';
+        context.lineWidth = 2.6;
+        context.beginPath();
+        context.ellipse(cx, cy, 11, 6.5, 0, 0, Math.PI * 2);
+        context.stroke();
+        context.strokeStyle = '#7fe3ff';
+        context.lineWidth = 1.4;
+        context.beginPath();
+        context.ellipse(cx, cy, 11, 6.5, 0, 0, Math.PI * 2);
+        context.stroke();
+        context.restore();
+      }
+      if (v.id !== view.drag?.id && (v.special?.golden || v.special?.champion)) {
+        const t = performance.now() * 0.004 + (v.appearance?.seed || 0);
+        const sx = Math.round(sprite.position.x + Math.cos(t) * 8);
+        const sy = Math.round(sprite.y + 4 + Math.sin(t * 1.4) * 5);
+        context.save();
+        context.fillStyle = v.special?.golden ? '#fff2a6' : '#8df3ff';
+        context.fillRect(sx - 1, sy, 3, 1);
+        context.fillRect(sx, sy - 1, 1, 3);
+        context.restore();
+      }
+      if (v.id !== view.drag?.id && (v.illness || v.needs.health < 55)) {
+        const critical = v.needs.health <= STORY_CONFIG.criticalHealthThreshold;
+        const speed = critical ? 9.5 : 4.2;
+        const pulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.001 * speed);
+        const cx = Math.round(sprite.position.x);
+        const cy = Math.round(sprite.y - 8 - (critical ? Math.round(pulse * 2) : 0));
+        context.save();
+        context.globalAlpha = 0.45 + 0.55 * pulse;
+        context.fillStyle = '#3b1514';
+        context.fillRect(cx - 5, cy - 5, 10, 10);
+        context.fillStyle = critical ? '#e5382e' : '#d96c38';
+        context.fillRect(cx - 4, cy - 4, 8, 8);
+        context.fillStyle = '#fff5dc';
+        context.fillRect(cx - 1, cy - 3, 2, 6);
+        context.fillRect(cx - 3, cy - 1, 6, 2);
+        context.restore();
+      }
+      const reaction = v.reaction;
+      if (v.id !== view.drag?.id && reaction?.until > state.time.seconds) {
         drawStudioMarker(`icon_${reaction.icon}`, { x: sprite.position.x, y: sprite.y - 6 });
       }
+    }
+    if (view.storyBeacon?.position && (!view.storyBeacon.until || performance.now() < view.storyBeacon.until)) {
+      const nowSec = performance.now() * 0.001;
+      const t = nowSec * STORY_CONFIG.beaconPulseSpeed;
+      const pulse = 0.5 + 0.5 * Math.sin(t);
+      const follow = view.storyBeacon.followVillagerId
+        ? state.villagers.find(v => v.id === view.storyBeacon.followVillagerId) : null;
+      const targetPos = follow ? follow.position : view.storyBeacon.position;
+      const bx = Math.round(targetPos.x);
+      const by = Math.round(targetPos.y);
+      const isDanger = view.storyBeacon.tone === 'danger';
+      const ringColor = isDanger ? '#ff594d' : '#ffd866';
+      const fillColor = isDanger ? 'rgba(229, 56, 46, 0.16)' : 'rgba(255, 216, 102, 0.16)';
+      const r = 14 + pulse * 6;
+      context.save();
+
+      // Animated curved drag-path guidance arrow from nearest eligible villager -> target circle
+      if (view.storyBeacon.dragFrom && !view.drag) {
+        const origin = findBestDragOrigin(world, view.storyBeacon.dragFrom, view.storyBeacon.excludeId);
+        if (origin) {
+          const ox = origin.position.x;
+          const oy = origin.position.y - 6;
+          const dist = Math.hypot(bx - ox, by - oy);
+          if (dist > 14) {
+            // Circle mark on the villager to grab
+            context.strokeStyle = '#3b281c';
+            context.lineWidth = 2.6;
+            context.beginPath();
+            context.arc(ox, oy + 4, 10 + (1 - pulse) * 3, 0, Math.PI * 2);
+            context.stroke();
+            context.strokeStyle = '#8ef59a';
+            context.lineWidth = 1.5;
+            context.beginPath();
+            context.arc(ox, oy + 4, 10 + (1 - pulse) * 3, 0, Math.PI * 2);
+            context.stroke();
+
+            // Marching dots arc from villager -> target
+            const mx = (ox + bx) / 2;
+            const my = Math.min(oy, by) - Math.min(34, dist * 0.28);
+            const dotCount = Math.max(5, Math.min(14, Math.floor(dist / 12)));
+            const phase = (nowSec * 1.45) % 1;
+            for (let i = 0; i < dotCount; i++) {
+              const u = ((i / dotCount) + phase) % 1;
+              const inv = 1 - u;
+              const dx = inv * inv * ox + 2 * inv * u * mx + u * u * bx;
+              const dy = inv * inv * oy + 2 * inv * u * my + u * u * (by - 4);
+              const size = u > 0.72 ? 2.4 : 1.7;
+              context.fillStyle = '#3b281c';
+              context.fillRect(Math.round(dx - size), Math.round(dy - size), Math.round(size * 2 + 1), Math.round(size * 2 + 1));
+              context.fillStyle = ringColor;
+              context.fillRect(Math.round(dx - size + 0.5), Math.round(dy - size + 0.5), Math.max(1, Math.round(size * 2 - 0.5)), Math.max(1, Math.round(size * 2 - 0.5)));
+            }
+          }
+        }
+      }
+
+      // Crisp pulsing circle mark around target
+      context.fillStyle = fillColor;
+      context.beginPath();
+      context.arc(bx, by - 4, r, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = '#3b281c';
+      context.lineWidth = 2.8;
+      context.beginPath();
+      context.arc(bx, by - 4, r, 0, Math.PI * 2);
+      context.stroke();
+      context.strokeStyle = ringColor;
+      context.lineWidth = 1.6;
+      context.beginPath();
+      context.arc(bx, by - 4, r, 0, Math.PI * 2);
+      context.stroke();
+
+      // Pixel-art bouncing pointer arrow directly above target
+      const ay = Math.round(by - 24 - pulse * 6);
+      context.fillStyle = '#3b281c';
+      context.fillRect(bx - 3, ay - 10, 6, 6);
+      context.fillRect(bx - 6, ay - 5, 12, 3);
+      context.fillRect(bx - 4, ay - 2, 8, 3);
+      context.fillRect(bx - 2, ay + 1, 4, 2);
+      context.fillStyle = ringColor;
+      context.fillRect(bx - 2, ay - 9, 4, 5);
+      context.fillRect(bx - 5, ay - 4, 10, 2);
+      context.fillRect(bx - 3, ay - 2, 6, 2);
+      context.fillRect(bx - 1, ay, 2, 2);
+
+      // Compact world callout tag above the pointer
+      if (view.storyBeacon.label) {
+        const label = String(view.storyBeacon.label);
+        context.font = 'bold 6px monospace';
+        const tw = Math.ceil(context.measureText(label).width);
+        const pw = tw + 8;
+        const ph = 11;
+        const px = Math.round(bx - pw / 2);
+        const py = Math.round(ay - 24);
+        context.fillStyle = '#3b281c';
+        context.fillRect(px - 1, py - 1, pw + 2, ph + 2);
+        context.fillStyle = isDanger ? '#7a1f1c' : '#ead6a9';
+        context.fillRect(px, py, pw, ph);
+        context.fillStyle = isDanger ? '#fff5dc' : '#322317';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(label, bx, py + ph / 2 + 0.5);
+      }
+
+      // Off-screen edge pointer when user pans away from active beacon
+      if (bx < bounds.left || bx > bounds.right || by < bounds.top || by > bounds.bottom) {
+        const margin = 22 / Math.max(0.5, camera.zoom);
+        const ex = Math.max(bounds.left + margin, Math.min(bounds.right - margin, bx));
+        const ey = Math.max(bounds.top + margin, Math.min(bounds.bottom - margin, by));
+        const ang = Math.atan2(by - ey, bx - ex);
+        context.translate(ex, ey);
+        context.rotate(ang);
+        context.fillStyle = '#3b281c';
+        context.beginPath();
+        context.moveTo(9, 0);
+        context.lineTo(-6, -6);
+        context.lineTo(-6, 6);
+        context.closePath();
+        context.fill();
+        context.fillStyle = ringColor;
+        context.beginPath();
+        context.moveTo(7, 0);
+        context.lineTo(-4.5, -4.5);
+        context.lineTo(-4.5, 4.5);
+        context.closePath();
+        context.fill();
+      }
+      context.restore();
     }
     if (view.drag) {
       const sprite = villagersOnMap.find(entry => entry.entity.id === view.drag.id);
@@ -634,14 +832,48 @@ export function createRenderer(canvas, world, camera, view) {
     return hitMasks.get(sprite.image)[(y * sprite.width + x) * 4 + 3] !== 0;
   }
 
+  function findVillagerExpanded(position, excludeId) {
+    const pad = RENDER_CONFIG.villagerHitPadPx;
+    let best = null;
+    let bestDist = Infinity;
+    for (const sprite of hits) {
+      if (sprite.hit !== 'villager' || sprite.entity.id === excludeId) continue;
+      if (position.x < sprite.x - pad || position.x > sprite.x + sprite.width + pad
+        || position.y < sprite.y - pad || position.y > sprite.y + sprite.height + pad) continue;
+      const cx = sprite.x + sprite.width / 2;
+      const cy = sprite.y + sprite.height / 2;
+      const d = Math.hypot(position.x - cx, position.y - cy);
+      if (d < bestDist) {
+        bestDist = d;
+        best = sprite;
+      }
+    }
+    if (best) return best;
+    // Fallback against live villager coordinates so grabbing works even before first frame mask
+    const radius = 14 + pad;
+    for (const villager of state.villagers) {
+      if (villager.id === excludeId) continue;
+      const pos = groundPosition(villager);
+      const d = Math.hypot(position.x - pos.x, position.y - (pos.y - 8));
+      if (d <= radius && d < bestDist) {
+        bestDist = d;
+        best = { hit: 'villager', entity: villager };
+      }
+    }
+    return best;
+  }
+
   function pick(position, only, excludeId) {
     const tile = worldToTile(position, tileSize);
     const find = hit => hits.findLast(sprite => sprite.hit === hit && sprite.entity.id !== excludeId && hasPixel(sprite, position));
-    if (only === 'villager') return find('villager');
-    const villager = find('villager');
+    const pickVillager = () => find('villager') || findVillagerExpanded(position, excludeId);
+    if (only === 'villager') return pickVillager();
+    const villager = pickVillager();
     if (villager) return villager;
-    const object = find('building') || find('crop') || find('collectible') || find('object');
+    const object = find('building') || find('grave') || find('crop') || find('collectible') || find('object');
     if (object) return object;
+    const grave = state.graves?.find(entry => entry.tile.x === tile.x && entry.tile.y === tile.y);
+    if (grave) return { hit: 'grave', entity: grave };
     const crop = state.crops?.find(crop => crop.tile.x === tile.x && crop.tile.y === tile.y);
     if (crop) return { hit: 'crop', entity: crop };
     const spot = map.fishingSpots.find(f => [f.standPosition, f.waterTarget].some(point => point.x === tile.x && point.y === tile.y));

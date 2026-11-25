@@ -3,17 +3,19 @@ import { sampleWeather } from './climate.js';
 import { findRoute, neighbors, tileToWorld, walkable } from './geometry.js';
 import { emitGroundDust, groundContact, groundPosition, villagerGroundTuning } from './ground.js';
 import { construction, costLabel, landmarks, researchProjects } from './progression.js';
-import { initializeVillagerQuirks, jobSkill } from './villagers.js';
+import { initializeVillagerQuirks, jobSkill, promoteToChampion } from './villagers.js';
 import { moveVillager, previewPlacement } from './world.js';
+import { ensureStoryState, evaluateAchievementsAndChallenges, getSurvivalStage, STORY_CONFIG } from './story.js';
 
 const stages = ['foundation', 'p25', 'p50', 'p75', 'completed'];
 const labels = {
   gather: 'Gathering food', chop: 'Cutting wood', mine: 'Gathering stone', build: 'Building',
   research: 'Researching', farm: 'Tending crops', fish: 'Fishing', heal: 'Healing',
   investigate: 'Investigating', family: 'Spending time together', collect: 'Collecting',
+  mourn: 'Paying respects',
 };
 const reusableJobs = new Set(['gather', 'chop', 'mine', 'research', 'farm', 'fish']);
-const jobAnimations = { family: 'talk', collect: 'gather' };
+const jobAnimations = { family: 'talk', collect: 'gather', mourn: 'sit' };
 const holding = { food: 'berries', wood: 'log', stone: 'stone' };
 const restReasons = { gather: 'gathering', chop: 'woodcutting', mine: 'gathering stone', build: 'building',
   research: 'researching', farm: 'farming', fish: 'fishing' };
@@ -23,14 +25,23 @@ const dropActions = {
   farm: ['Tend Crops', 'icon_work'], build: ['Build', 'icon_build'], research: ['Research', 'icon_research'],
   heal: ['Heal', 'icon_health'], family: ['Spend Time Together', 'icon_love'],
   investigate: ['Investigate', 'icon_curious'], collect: ['Collect', 'icon_discovery'],
+  mourn: ['Pay Respects', 'icon_love'],
 };
 
 export function startGameplay(world) {
   const { state, map, assets, resources } = world;
   const { tileSize } = map.meta;
   const listeners = new Set();
+  const eventListeners = new Set();
   const camp = map.objects.find(object => object.type === 'campfire_site');
-  state.simulation ??= { nextNeeds: 12, nextCollectible: 8, nextBirthday: 180, nextIllness: 110, nextVillager: 6 };
+  const story = ensureStoryState(state);
+  state.simulation ??= {
+    nextNeeds: STORY_CONFIG.needsIntervalSec,
+    nextCollectible: 8,
+    nextBirthday: STORY_CONFIG.birthdayIntervalSec,
+    nextIllness: STORY_CONFIG.illnessIntervalSec,
+    nextVillager: 6,
+  };
   const clock = state.simulation;
   let revision = 0;
   let reachableCollectibleTiles;
@@ -38,6 +49,22 @@ export function startGameplay(world) {
   function announce(message) {
     revision++;
     for (const listener of listeners) listener(message);
+  }
+
+  function emitEvent(type, payload = {}) {
+    revision++;
+    const event = { type, ...payload };
+    for (const listener of eventListeners) listener(event);
+  }
+
+  function checkAchievements() {
+    const unlocked = evaluateAchievementsAndChallenges(world);
+    for (const item of unlocked) {
+      const rewardNote = item.reward ? ` — ${item.reward}!` : '!';
+      announce(`${item.isChallenge ? 'Challenge Complete' : 'Achievement Unlocked'}: ${item.title}${rewardNote}`);
+      emitEvent('achievement', { achievement: item });
+    }
+    return unlocked;
   }
 
   function pay(cost = {}) {
@@ -103,6 +130,8 @@ export function startGameplay(world) {
     if (!pay({ knowledge: project.cost })) return `You need ${project.cost} Knowledge.`;
     state.abilities[id] = true;
     announce(`Learned ${id.replaceAll('_', ' ')}.`);
+    emitEvent('research', { abilityId: id });
+    checkAchievements();
     return null;
   }
 
@@ -139,6 +168,9 @@ export function startGameplay(world) {
       }
       const error = familyIssue(villager, target);
       return error ? { error } : { job: 'family', points: memberPoints(target) };
+    }
+    if (kind === 'grave') {
+      return { job: 'mourn', points: mapFacingTile(target.tile), animation: 'sit' };
     }
     if (kind === 'collectible') {
       const asset = assets.registry.get(target.assetId);
@@ -181,7 +213,7 @@ export function startGameplay(world) {
   function getTarget(ref) {
     const lookup = {
       building: state.buildings, villager: state.villagers, collectible: state.activeCollectibles,
-      crop: state.crops,
+      crop: state.crops, grave: state.graves,
     };
     const found = lookup[ref.kind]?.find(target => target.id === ref.id) || world.objects.get(ref.id);
     return found && { ...found, kind: ref.kind };
@@ -190,7 +222,7 @@ export function startGameplay(world) {
   function assignmentIssue(villager, action) {
     if (action.error) return action.error;
     if (villager.lifeStage === 'baby' || (villager.lifeStage === 'child'
-      && action.job && !['gather', 'collect', 'fish'].includes(action.job))) return 'This villager is too young for that job.';
+      && action.job && !['gather', 'collect', 'fish', 'mourn'].includes(action.job))) return 'This villager is too young for that job.';
     if (villager.careUntil > state.time.seconds && action.job) return 'This villager is caring for a newborn.';
     if (villager.needs.health < 30 && action.job) return 'This villager needs care before working.';
     return null;
@@ -222,12 +254,14 @@ export function startGameplay(world) {
     const issue = assignmentIssue(villager, action);
     if (issue) return issue;
     if (!moveVillager(world, villager, action.points || [], ref.id)) return 'No reachable interaction point.';
+    delete villager.holdStillUntil;
     setAssignment(villager, target, ref, action, remember);
     return null;
   }
 
   function land(villager, tile) {
     endConversation(villager);
+    delete villager.holdStillUntil;
     villager.tile = { x: tile.x, y: tile.y };
     villager.position = tileToWorld(tile, tileSize);
     villager.route = [];
@@ -305,7 +339,34 @@ export function startGameplay(world) {
 
   function move(villager, tile) {
     if (!moveVillager(world, villager, [tile])) return 'That tile is blocked or unreachable.';
+    delete villager.holdStillUntil;
     stop(villager);
+    return null;
+  }
+
+  function holdStill(villager, duration = STORY_CONFIG.holdStillDurationSec) {
+    if (!villager) return false;
+    stop(villager);
+    villager.route = [];
+    villager.currentTask = null;
+    villager.animation = 'idle';
+    villager.activity = 'Holding still';
+    villager.holdStillUntil = state.time.seconds + duration;
+    const contact = groundContact(villager);
+    contact.x = contact.y = contact.vx = contact.vy = 0;
+    revision++;
+    return true;
+  }
+
+  function promoteChampion(villagerId) {
+    if (!state.achievements.challenge_speedrun) return 'Complete the Speedrun Legend challenge (<100 days) first.';
+    if (state.challenges?.championVillagerId) return 'A village Champion has already been promoted.';
+    const villager = state.villagers.find(v => v.id === villagerId);
+    if (!villager) return 'Choose a living villager to promote.';
+    promoteToChampion(villager);
+    state.challenges.championVillagerId = villager.id;
+    announce(`${villager.name} ascended as Island Champion — Max Stats & 10x Speed!`);
+    emitEvent('challenge_reward', { challengeId: 'challenge_speedrun', villager });
     return null;
   }
 
@@ -316,6 +377,7 @@ export function startGameplay(world) {
     state.worldFlags[puzzleId] = true;
     state.objects[target.id].state = puzzle.state;
     state.objects[target.id].art = puzzle.art;
+    if (puzzleId === 'light_campfire') story.campLitAt ??= state.time.seconds;
     if (puzzleId === 'unblock_spring') {
       state.crops = map.farmingZones[0].tiles.filter((_, index) => index % 9 === 0).slice(0, 8)
         .map(([x, y], index) => ({ id: `crop_${index}`, tile: { x, y }, cropType: map.farmingZones[0].cropTypes[index % 5], stage: 0 }));
@@ -325,6 +387,8 @@ export function startGameplay(world) {
     announce(puzzleId === 'repair_bridge' ? 'The bridge is open. Explore the eastern island.'
       : puzzleId === 'restore_monument' ? 'The ancient monument is restored. Your village can keep growing.'
         : `${villager.name} finished: ${puzzle.label}.`);
+    emitEvent('landmark', { puzzleId, villager, object: target });
+    checkAchievements();
   }
 
   function build(target) {
@@ -337,28 +401,40 @@ export function startGameplay(world) {
     if (site.type === 'family_house') state.world.populationCapacity += 2;
     refreshCollision();
     announce(`${assets.buildings.find(building => building.type === site.type).name} completed.`);
+    emitEvent('building', { building: site });
+    checkAchievements();
     return false;
   }
 
-  function haveChild(villager, target) {
-    const partner = state.villagers.find(member => member.id === target.id);
-    if (!partner || familyIssue(villager, partner) || !pay({ food: 12 })) return;
+  function spawnChild(villager, partner) {
     const index = clock.nextVillager++;
     const { name, direction, ...appearance } = assets.generateVillager(8100 + index, { stage: 'baby' });
     const id = `villager_${String(index).padStart(3, '0')}`;
-    const tile = buildingPoints(completeBuilding('family_house')).find(point => walkable(world.collision, point)) || villager.tile;
-    state.villagers.push({
+    const familyHome = completeBuilding('family_house');
+    const homePoints = familyHome ? buildingPoints(familyHome) : [];
+    const tile = homePoints.find(point => walkable(world.collision, point)) || villager.tile;
+    const newborn = {
       id, name, age: 0, lifeStage: 'baby', appearance, direction, animation: 'idle',
       tile, position: tileToWorld(tile, tileSize), currentTask: null, route: [], preferredJob: null,
       needs: { hunger: 90, energy: 100, health: 100 }, skills: {}, relationships: { parents: [villager.id, partner.id] },
-    });
-    initializeVillagerQuirks(state.villagers.at(-1));
+    };
+    state.villagers.push(newborn);
+    initializeVillagerQuirks(newborn);
     for (const [parent, other] of [[villager, partner], [partner, villager]]) {
       parent.relationships.partner = other.id;
       (parent.relationships.children ??= []).push(id);
     }
     villager.careUntil = state.time.seconds + 30;
+    story.birthCount = (story.birthCount || 0) + 1;
     announce(`${villager.name} and ${partner.name} welcomed ${name}.`);
+    emitEvent('birth', { baby: newborn, parents: [villager, partner] });
+    return newborn;
+  }
+
+  function haveChild(villager, target) {
+    const partner = state.villagers.find(member => member.id === target.id);
+    if (!partner || familyIssue(villager, partner) || !pay({ food: 12 })) return;
+    spawnChild(villager, partner);
   }
 
   function collect(target) {
@@ -370,7 +446,10 @@ export function startGameplay(world) {
     if (!entry.discovered) {
       entry.discovered = true;
       entry.firstDiscoveredAt = state.time.day;
+      const discoveredCount = Object.values(state.collectionProgress).filter(item => item.discovered).length;
       announce(`Discovered ${assets.registry.get(target.assetId).name}.`);
+      emitEvent('collectible', { assetId: target.assetId, position: target.position, firstEver: discoveredCount === 1 });
+      checkAchievements();
     }
   }
 
@@ -394,11 +473,27 @@ export function startGameplay(world) {
       const patient = state.villagers.find(member => member.id === target.id);
       if (patient) {
         patient.needs.health = Math.min(100, patient.needs.health + (completeBuilding('healing_hut') ? 75 : 50));
+        if (patient.needs.health >= 75 && patient.illness) {
+          delete patient.illness;
+          story.firstCureDone = true;
+          patient.reaction = { icon: 'happy', until: state.time.seconds + 1.8 };
+        }
         announce(`${villager.name} cared for ${patient.name}.`);
+        emitEvent('healed', { villager, patient });
+        checkAchievements();
         if (patient.needs.health < 100) {
           work.phase = 'approach';
           return;
         }
+      }
+    } else if (job === 'mourn') {
+      const grave = state.graves.find(entry => entry.id === target.id);
+      if (grave) {
+        grave.tendedCount = (grave.tendedCount || 0) + 1;
+        villager.needs.energy = Math.min(100, villager.needs.energy + STORY_CONFIG.mournEnergyBoost);
+        villager.needs.health = Math.min(100, villager.needs.health + STORY_CONFIG.mournHealthBoost);
+        villager.reaction = { icon: 'love', until: state.time.seconds + 1.8 };
+        announce(`${villager.name} laid island blossoms at ${grave.name}'s memorial.`);
       }
     } else if (job === 'family') haveChild(villager, target);
     else if (job === 'collect') collect(target);
@@ -478,7 +573,9 @@ export function startGameplay(world) {
   function beginWork(villager) {
     const { work } = villager;
     work.phase = 'work';
-    work.remaining = 3.2 * (jobSkill(villager, work.job)?.rank.workTime ?? 1);
+    work.remaining = work.job === 'mourn'
+      ? STORY_CONFIG.mournWorkSec
+      : 3.2 * (jobSkill(villager, work.job)?.rank.workTime ?? 1);
     villager.activity = labels[work.job];
     villager.animation = work.animation || jobAnimations[work.job] || work.job;
   }
@@ -685,8 +782,20 @@ export function startGameplay(world) {
 
   function advanceVillager(villager, elapsed) {
     if (world.heldVillager === villager.id) {
+      delete villager.holdStillUntil;
       endConversation(villager);
       return;
+    }
+    if (villager.holdStillUntil !== undefined) {
+      if (state.time.seconds < villager.holdStillUntil) {
+        villager.route = [];
+        villager.currentTask = null;
+        villager.animation = 'idle';
+        villager.activity = `Holding still (${Math.ceil(villager.holdStillUntil - state.time.seconds)}s)`;
+        return;
+      }
+      delete villager.holdStillUntil;
+      villager.activity = 'Idle';
     }
     if (villager.route.length) {
       villager.activity = villager.snakeFlee ? 'Running from a snake'
@@ -831,46 +940,203 @@ export function startGameplay(world) {
     state.activeCollectibles.push({ id: `find_${asset.id}`, assetId: asset.id, zoneId, tile, position: tileToWorld(tile, tileSize) });
   }
 
+  function inflictIllness(villager, cause = 'fever', forced = false, options = {}) {
+    if (!villager || !state.villagers.includes(villager)) return false;
+    const now = state.time.seconds;
+    const tutorialSafe = Boolean(options.tutorialSafe);
+    const startHp = tutorialSafe ? STORY_CONFIG.tutorialIllnessStartHealth : STORY_CONFIG.illnessStartHealth;
+    villager.needs.health = Math.min(villager.needs.health, startHp);
+    villager.illness = {
+      cause,
+      tutorialSafe,
+      startedAt: now,
+      nextContagionAt: tutorialSafe ? Infinity : now + STORY_CONFIG.contagionDelaySec,
+      criticalWarned: false,
+    };
+    villager.reaction = { icon: 'sick', until: now + 2.4 };
+    announce(tutorialSafe
+      ? `${villager.name} is unwell! Learn Healing (10 Knowledge) and drag a healthy adult onto them.`
+      : `${villager.name} caught a fever! Drag a healer onto them before their health runs out.`);
+    emitEvent('illness', { villager, cause, forced, tutorialSafe });
+    return true;
+  }
+
+  function killVillager(villager, cause = 'sickness') {
+    if (!villager || !state.villagers.includes(villager)) return null;
+    const now = state.time.seconds;
+    endConversation(villager);
+    state.villagers = state.villagers.filter(member => member.id !== villager.id);
+    if (world.heldVillager === villager.id) world.heldVillager = null;
+    for (const member of state.villagers) {
+      if (member.relationships.partner === villager.id) delete member.relationships.partner;
+      if (member.work?.ref?.kind === 'villager' && member.work.ref.id === villager.id) member.work = null;
+      if (distance(member.tile, villager.tile) <= 8) {
+        member.reaction = { icon: 'warn', until: now + 2.4 };
+      }
+    }
+    const grave = {
+      id: `grave_${story.nextGraveId++}`,
+      name: villager.name,
+      age: villager.age,
+      cause,
+      day: state.time.day,
+      tile: { x: villager.tile.x, y: villager.tile.y },
+      position: tileToWorld(villager.tile, tileSize),
+      tendedCount: 0,
+      createdAt: now,
+    };
+    state.graves.push(grave);
+    story.deathCount = (story.deathCount || 0) + 1;
+    if (cause === 'sickness') story.sicknessDeathCount = (story.sicknessDeathCount || 0) + 1;
+    else if (cause === 'starvation') story.starvationDeathCount = (story.starvationDeathCount || 0) + 1;
+    else if (cause === 'old_age') story.oldAgeDeathCount = (story.oldAgeDeathCount || 0) + 1;
+
+    const msg = cause === 'sickness'
+      ? `${villager.name} died of untreated sickness. Drop a villager at their memorial and learn Healing to protect survivors.`
+      : cause === 'starvation'
+        ? `${villager.name} starved to death! Gather Food immediately.`
+        : `${villager.name} passed away peacefully at age ${villager.age}.`;
+    announce(msg);
+    emitEvent('death', { cause, villager, grave });
+    if (state.villagers.length === 0) {
+      emitEvent('colony_lost', { gravesCount: state.graves.length });
+    }
+    return grave;
+  }
+
+  function pickIllnessCandidate() {
+    const candidates = state.villagers.filter(member => member.lifeStage !== 'baby' && !member.illness);
+    if (!candidates.length) return null;
+    return candidates.sort((a, b) => {
+      const aBusy = a.work || a.preferredJob ? 1 : 0;
+      const bBusy = b.work || b.preferredJob ? 1 : 0;
+      if (aBusy !== bBusy) return aBusy - bBusy;
+      const aScore = a.needs.energy + a.needs.hunger - (a.lifeStage === 'elder' ? 20 : 0);
+      const bScore = b.needs.energy + b.needs.hunger - (b.lifeStage === 'elder' ? 20 : 0);
+      return aScore - bScore;
+    })[0];
+  }
+
   function advance(elapsed) {
     const now = state.time.seconds;
+    const rain = sampleWeather(state.weather, now).rain;
+    const stage = getSurvivalStage(world);
+
+    // 1. Hunger, low-food warnings, and staged starvation lethality (safe during Stage 0-1 tutorial)
     if (now >= clock.nextNeeds) {
-      clock.nextNeeds += 12;
+      clock.nextNeeds += STORY_CONFIG.needsIntervalSec;
+      const starvingDeaths = [];
+      const minStarveHp = stage >= 2 ? 0 : STORY_CONFIG.tutorialStarvationFloor;
       for (const villager of state.villagers) {
         villager.needs.hunger = Math.max(0, villager.needs.hunger - (villager.lifeStage === 'baby' ? 7 : 12));
         if (villager.needs.hunger <= 70 && pay({ food: 1 })) villager.needs.hunger += 25;
-        if (villager.needs.hunger <= 20) villager.needs.health = Math.max(10, villager.needs.health - 7);
+        if (villager.needs.hunger <= 20) {
+          villager.needs.health = Math.max(minStarveHp, villager.needs.health - STORY_CONFIG.starvationHealthLoss);
+          if (villager.needs.health <= 0) {
+            starvingDeaths.push(villager);
+          }
+        }
+      }
+      if (resources.get('food') <= STORY_CONFIG.lowFoodWarningThreshold && state.villagers.length > 0
+        && now - story.lastLowFoodWarnAt >= STORY_CONFIG.lowFoodWarningCooldownSec) {
+        story.lastLowFoodWarnAt = now;
+        announce('Food is running low! Drag villagers onto berries, crops, or fish.');
+        emitEvent('low_food', { food: resources.get('food') });
+      }
+      for (const victim of starvingDeaths) {
+        killVillager(victim, victim.illness ? 'sickness' : 'starvation');
       }
     }
-    if (now >= clock.nextIllness) {
-      clock.nextIllness += 110;
-      const villager = state.villagers.filter(member => member.lifeStage !== 'baby')
-        .sort((a, b) => a.needs.health - b.needs.health)[0];
-      if (villager?.needs.health >= 75) {
-        villager.needs.health = 58;
-        announce(`${villager.name} is unwell. Drop another villager onto them to offer care.`);
+
+    // 2. Active sickness decay, critical warning, contagion, and lethal outcome
+    const sickDeaths = [];
+    for (const villager of state.villagers.slice()) {
+      if (!villager.illness) continue;
+      if (villager.needs.health >= 75) {
+        delete villager.illness;
+        continue;
+      }
+      const beingHealed = state.villagers.some(member => member.id !== world.heldVillager
+        && member.work?.job === 'heal' && member.work.phase === 'work' && member.work.ref.id === villager.id);
+      if (beingHealed) continue;
+
+      if (villager.illness.tutorialSafe) {
+        // Guided first illness drains slowly and never kills the tutorial villager
+        villager.needs.health = Math.max(
+          STORY_CONFIG.tutorialIllnessFloor,
+          villager.needs.health - STORY_CONFIG.tutorialIllnessDrainPerSec * elapsed,
+        );
+        continue;
+      }
+
+      let drain = STORY_CONFIG.illnessBaseDrainPerSec;
+      if (rain >= 0.6) drain += STORY_CONFIG.illnessHeavyRainBonus;
+      else if (rain >= 0.12) drain += STORY_CONFIG.illnessLightRainBonus;
+      if (villager.needs.hunger <= 25) drain += STORY_CONFIG.illnessHungerBonus;
+      if (villager.lifeStage === 'elder') drain += STORY_CONFIG.illnessElderBonus;
+
+      villager.needs.health = Math.max(0, villager.needs.health - drain * elapsed);
+      if (villager.needs.health <= 0) {
+        sickDeaths.push(villager);
+        continue;
+      }
+      if (villager.needs.health <= STORY_CONFIG.criticalHealthThreshold && !villager.illness.criticalWarned) {
+        villager.illness.criticalWarned = true;
+        villager.reaction = { icon: 'danger', until: now + 3 };
+        announce(`${villager.name} is critically ill (${Math.ceil(villager.needs.health)}% HP)! Heal them now!`);
+      }
+      if (now >= (villager.illness.nextContagionAt ?? Infinity)) {
+        villager.illness.nextContagionAt = now + STORY_CONFIG.contagionCheckSec;
+        const neighbor = state.villagers.find(member => member !== villager && !member.illness
+          && member.lifeStage !== 'baby' && member.needs.health >= 70
+          && !member.work && distance(member.tile, villager.tile) <= STORY_CONFIG.contagionRadiusTiles);
+        if (neighbor) {
+          announce(`${villager.name}'s fever spread to ${neighbor.name}!`);
+          inflictIllness(neighbor, 'contagion', false, { tutorialSafe: false });
+        }
       }
     }
+    for (const victim of sickDeaths) killVillager(victim, 'sickness');
+
+    // 3. Staged illness triggers:
+    //    - Stage 0: Completely suppressed so tutorial saves never crumble early.
+    //    - Stage 1: Trigger ONE gentle guided illness once player has >=10 Knowledge or Healing.
+    //    - Stage 2: Full recurring weather-sensitive illness hazard.
+    const anySick = state.villagers.some(v => v.illness);
+    if (stage === 1 && !story.seenEvents.first_illness && !anySick && state.villagers.length > 0) {
+      const victim = pickIllnessCandidate();
+      if (victim) {
+        inflictIllness(victim, 'fever', true, { tutorialSafe: true });
+        clock.nextIllness = Math.max(clock.nextIllness, now + STORY_CONFIG.illnessIntervalSec);
+      }
+    } else if (stage >= 2 && now >= clock.nextIllness) {
+      clock.nextIllness = now + (rain >= 0.12 ? STORY_CONFIG.rainIllnessIntervalSec : STORY_CONFIG.illnessIntervalSec);
+      const victim = pickIllnessCandidate();
+      const exposed = rain >= 0.12 || (victim && (victim.needs.energy < 70 || victim.needs.hunger < 70 || victim.needs.health >= 75));
+      if (victim && exposed) {
+        inflictIllness(victim, rain >= 0.12 ? 'storm_chill' : 'fever', false, { tutorialSafe: false });
+      }
+    } else if (stage < 2 && now >= clock.nextIllness) {
+      // Keep natural illness timer pushed forward during safe tutorial stages
+      clock.nextIllness = now + STORY_CONFIG.illnessIntervalSec;
+    }
+
+    // 4. Aging & natural old-age passing
     if (now >= clock.nextBirthday) {
-      clock.nextBirthday += 180;
+      clock.nextBirthday += STORY_CONFIG.birthdayIntervalSec;
       for (const villager of state.villagers) {
         villager.age++;
-        const stage = villager.age < 2 ? 'baby' : villager.age < 18 ? 'child' : villager.age < 65 ? 'adult' : 'elder';
-        if (stage !== villager.lifeStage) {
+        const stageName = villager.age < 2 ? 'baby' : villager.age < 18 ? 'child' : villager.age < 65 ? 'adult' : 'elder';
+        if (stageName !== villager.lifeStage) {
           stop(villager);
-          villager.lifeStage = stage;
-          announce(`${villager.name} is now ${stage === 'adult' || stage === 'elder' ? 'an' : 'a'} ${stage}.`);
+          villager.lifeStage = stageName;
+          announce(`${villager.name} is now ${stageName === 'adult' || stageName === 'elder' ? 'an' : 'a'} ${stageName}.`);
         }
       }
-      const deceased = state.villagers.filter(villager => villager.age >= 90);
-      if (deceased.length) {
-        const ids = new Set(deceased.map(villager => villager.id));
-        state.villagers = state.villagers.filter(villager => !ids.has(villager.id));
-        for (const villager of state.villagers) {
-          if (ids.has(villager.relationships.partner)) delete villager.relationships.partner;
-        }
-        for (const villager of deceased) announce(`${villager.name} passed away at age ${villager.age}.`);
-      }
+      const deceased = state.villagers.filter(villager => villager.age >= STORY_CONFIG.elderDeathAge);
+      for (const elder of deceased) killVillager(elder, 'old_age');
     }
+
     if (now >= clock.nextCollectible) {
       clock.nextCollectible += 17;
       spawnCollectible();
@@ -884,6 +1150,7 @@ export function startGameplay(world) {
       }
     }
     state.villagers.slice().forEach(villager => advanceVillager(villager, elapsed));
+    checkAchievements();
   }
 
   state.crops ??= [];
@@ -898,12 +1165,33 @@ export function startGameplay(world) {
       if (!result) villager.appearance.heldObject = 'none';
       return result;
     }, drop, place, research, stop(villager) {
+      delete villager.holdStillUntil;
       if (villager.route.length) moveVillager(world, villager, [villager.tile]);
       stop(villager);
       villager.retryAt = state.time.seconds + 12;
-    }, refreshCollision, spawnCollectible,
+    },
+    holdStill,
+    promoteChampion,
+    checkAchievements,
+    refreshCollision, spawnCollectible,
+    inflictIllness,
+    killVillager,
+    triggerBirth(a, b) {
+      const adults = state.villagers.filter(v => v.lifeStage === 'adult');
+      const p1 = a || adults[0] || state.villagers[0];
+      const p2 = b || adults.find(v => v !== p1) || state.villagers.find(v => v !== p1);
+      if (!p1 || !p2) return null;
+      return spawnChild(p1, p2);
+    },
     get revision() { return revision; },
-    subscribe(listener) { listeners.add(listener); },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    subscribeEvents(listener) {
+      eventListeners.add(listener);
+      return () => eventListeners.delete(listener);
+    },
   };
   refreshCollision();
   world.gameplay = gameplay;

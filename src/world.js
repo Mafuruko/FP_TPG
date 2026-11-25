@@ -8,6 +8,7 @@ import { initializeLandWildlife, landWildlifeTuning, updateLandWildlife } from '
 import { findRoute, sameTile, tileToWorld, walkable } from './geometry.js';
 import { initializeTurtle, updateShoreRipples, updateTurtle } from './turtle.js';
 import { createWildlifeDirector } from './wildlife-director.js';
+import { createInitialChallenges, createInitialStoryState, STORY_CONFIG } from './story.js';
 
 export const abilities = [
   ['gather', 'Gathering', 'gather', true], ['chop', 'Woodcutting', 'chop', true],
@@ -112,7 +113,7 @@ export function createWorld(assets) {
   const wildlife = createWildlife(map, assets.animals);
   const startingRoster = [
     ['Luna', 4821, 'adult', 23], ['Kai', 127, 'adult', 26], ['Mira', 719, 'adult', 31],
-    ['Tavi', 116, 'child', 9], ['Oren', 806, 'elder', 66],
+    ['Tavi', 116, 'child', 9], ['Oren', 806, 'elder', 78],
   ];
   const state = {
     version: 1,
@@ -139,6 +140,9 @@ export function createWorld(assets) {
     ])),
     abilities: Object.fromEntries(abilities.map(ability => [ability.id, ability.startsUnlocked])),
     achievements: {}, worldFlags: {},
+    story: createInitialStoryState(),
+    challenges: createInitialChallenges(),
+    graves: [],
     time: { seconds: 0, minutes: 480, day: 1, speed: 1, paused: false },
     weather: { current: 'clear' },
     settings: { musicVolume: 100 },
@@ -286,12 +290,20 @@ export function updateWorld(world, delta) {
   world.climate.advance(elapsed);
   for (const villager of villagers) {
     if (world.heldVillager === villager.id) continue;
+    if (villager.holdStillUntil > time.seconds) {
+      villager.route = [];
+      villager.currentTask = null;
+      villager.animation = 'idle';
+      continue;
+    }
     const before = { ...villager.position };
     if (villager.route.length) {
       const carrying = villager.work?.phase === 'deliver';
       villager.animation = villager.lifeStage === 'baby' ? 'crawl' : carrying ? 'carry' : villager.snakeFlee ? 'run' : 'walk';
+      const championMult = villager.special?.champion ? STORY_CONFIG.championSpeedMultiplier : 1;
       const speed = villagerGroundTuning[`${villager.animation}Speed`]
-        * (villager.lifeStage !== 'baby' && villager.quirks?.includes('fastWalker') ? 1.15 : 1);
+        * (villager.lifeStage !== 'baby' && villager.quirks?.includes('fastWalker') ? 1.15 : 1)
+        * championMult;
       advanceEntity(villager, elapsed * speed, world.map.meta.tileSize, (dx, dy) => {
         villager.direction = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back');
       });

@@ -4,12 +4,16 @@ import { tileToWorld, walkable, worldToTile } from './geometry.js';
 import { debugOptions, svgUrl } from './render.js';
 import { abilities } from './world.js';
 import { construction, costLabel, landmarks, researchProjects } from './progression.js';
-import { needStatus, skillProgress, villagerQuirks, villagerSkills } from './villagers.js';
+import { needStatus, recolorSvgToGold, skillProgress, villagerQuirks, villagerSkills } from './villagers.js';
 import { bindSmartTooltips } from './tooltips.js';
 import { createHudWindowManager } from './hud-windows.js';
 import { renderDevActionsHtml, runDevAction } from './dev-tools.js';
 import { createMusicPlayer } from './music.js';
 import { bindPreferences, renderPreferences } from './preferences.js';
+import {
+  ACHIEVEMENT_DEFS, CHALLENGE_DEFS, FEATURE_GUIDE_MAP, FEATURE_GUIDES,
+  findNearestResource, getActiveChapter, landmarkAnchor, STORY_CONFIG,
+} from './story.js';
 
 const element = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char =>
@@ -18,11 +22,13 @@ const img = (svg, css) => `<img class="${css}" src="${escape(svgUrl(svg))}" alt=
 const names = {
   villagers: 'Villagers', buildings: 'Buildings', research: 'Research',
   collection: 'Collection Book', settings: 'Settings', save: 'Save & Load',
-  achievements: 'Achievements', notifications: 'Notifications & Events', pause: 'Paused', journal: 'Island journal',
+  achievements: 'Achievements', notifications: 'Notifications & Events', pause: 'Paused', journal: 'Island Journal',
+  guide: 'Field Guide',
 };
 const panelIcons = {
   villagers: 'villagers', buildings: 'build', research: 'research', collection: 'book',
   settings: 'gear', save: 'save', achievements: 'trophy', notifications: 'info', pause: 'pause', journal: 'book',
+  guide: 'curious',
 };
 const researchIcons = {
   heal: 'health', farm: 'hunger', fish: 'discovery', advanced_construction: 'build', ancient_knowledge: 'knowledge',
@@ -87,7 +93,9 @@ export function createUI(world, view, actions) {
   const content = element('panel-content');
   const hud = element('studio-hud');
   const hudWindowsLayer = element('hud-windows');
+  const questTracker = element('quest-tracker');
   const debugPanel = element('debug-panel');
+  const wipeDataBtn = element('wipe-data');
   let storage = null;
   try { storage = window.localStorage; } catch { /* Ignore storage unavailability. */ }
   const { preferences } = actions;
@@ -101,6 +109,14 @@ export function createUI(world, view, actions) {
   let villagerPage = 0;
   let journalPage = 0;
   let notesPage = 0;
+  let achTab = 'milestones';
+  let achPage = 0;
+  let guideId = 'basics';
+  let guidePage = 0;
+  let confirmSaveWipe = false;
+  let wipeArmedUntil = 0;
+  let wipeArmTimer = null;
+  let lastQuestSignature = '';
   let devTab = 'actions';
   let devActionPage = 0;
   let noticeTimer;
@@ -165,6 +181,14 @@ export function createUI(world, view, actions) {
       isVisible: () => true,
     },
     {
+      id: 'quest',
+      element: questTracker,
+      title: () => 'Island Guide',
+      shortTitle: () => 'Guide',
+      iconHtml: () => ic('curious', 14),
+      isVisible: () => true,
+    },
+    {
       id: 'clock',
       element: timePanel,
       title: () => 'Clock & Speed',
@@ -220,11 +244,17 @@ export function createUI(world, view, actions) {
     if ((menu === 'research' && key === 'knowledge') || menu === 'buildings') renderMenu();
   });
 
+  function clearToasts() {
+    clearTimeout(noticeTimer);
+    toasts.replaceChildren();
+  }
+
   function notify(text) {
     const note = { id: `note-${notes.length + 1}`, type: 'info', title: text, text: '' };
     notes.push(note);
-    toasts.innerHTML = GameUI.renderNotification(note);
     if (menu === 'notifications') renderMenu();
+    if (view.storyActive) return;
+    toasts.innerHTML = GameUI.renderNotification(note);
     clearTimeout(noticeTimer);
     noticeTimer = setTimeout(() => { toasts.replaceChildren(); }, 3600);
   }
@@ -316,7 +346,8 @@ export function createUI(world, view, actions) {
   }
 
   function portrait(villager, css) {
-    return img(assets.villager.svg({ config: { ...villager.appearance, name: villager.name, lifeStage: villager.lifeStage } }), css);
+    const raw = assets.villager.svg({ config: { ...villager.appearance, name: villager.name, lifeStage: villager.lifeStage } });
+    return img(villager.special?.golden ? recolorSvgToGold(raw) : raw, css);
   }
 
   function renderPager(page, totalPages, act) {
@@ -339,6 +370,14 @@ export function createUI(world, view, actions) {
 
   function renderVillagers() {
     const selected = state.villagers.find(villager => villager.id === view.selectedVillager);
+    const illBadge = selected?.illness
+      ? `<div class="villager-illness-alert">${ic('sick', 14)}<span>Fever active! ${state.abilities.heal ? 'Drag a healthy adult onto them to heal.' : 'Unlock Healing (10 Knowledge) in Research!'}</span></div>`
+      : '';
+    const isHolding = Boolean(selected && selected.holdStillUntil > state.time.seconds);
+    const specialTags = selected ? [
+      selected.special?.golden ? '<span class="villager-special-chip is-gold">★ Golden</span>' : '',
+      selected.special?.champion ? '<span class="villager-special-chip is-champ">⚡ 10× Speed</span>' : '',
+    ].filter(Boolean).join('') : '';
     const profile = selected ? `<div class="villager-card">
       <div class="villager-card-top">
         ${portrait(selected, 'portrait')}
@@ -347,6 +386,7 @@ export function createUI(world, view, actions) {
             <h3>${escape(selected.name)}</h3>
             <span class="villager-age-chip">${escape(selected.lifeStage)} · <span id="villager-age">${selected.age}</span></span>
           </div>
+          ${specialTags ? `<div class="villager-special-row">${specialTags}</div>` : ''}
           <p class="villager-task-line" id="villager-task"></p>
           <p class="villager-quirks">${(selected.quirks || []).map(quirk => escape(villagerQuirks[quirk])).join(' · ')}</p>
           <div class="villager-needs-bars" id="villager-needs" aria-label="Villager needs">
@@ -356,14 +396,17 @@ export function createUI(world, view, actions) {
           </div>
         </div>
       </div>
+      ${illBadge}
       <div class="villager-skills-grid" aria-label="Skills">${Object.entries(villagerSkills).map(([key, skill]) => `
         <div class="villager-skill-pill" data-skill="${key}">
           <span class="skill-label">${skill.label}</span>
           <b class="skill-rank" data-tier="0"></b>
         </div>`).join('')}</div>
-      <div class="villager-card-foot">
-        ${selected.relationships.children?.length ? `<span class="villager-children">Children: ${selected.relationships.children.length}</span>` : '<span></span>'}
-        ${btn('Stop work', { v: 's', act: 'stop-work' })}
+      ${selected.relationships.children?.length ? `<div class="villager-children-row"><span class="villager-children">Children: ${selected.relationships.children.length}</span></div>` : ''}
+      <div class="villager-actions-grid" aria-label="Villager actions">
+        <button type="button" class="gu-btn s villager-act-btn" data-act="stop-work" data-tip="Cancel current task">Stop Work</button>
+        <button type="button" class="gu-btn ${isHolding ? 'g' : 's'} villager-act-btn" id="btn-stop-moving" data-act="stop-moving" data-tip="Freeze in place for 20s so grabbing is easy">${isHolding ? 'Holding…' : 'Stop Moving'}</button>
+        <button type="button" class="gu-btn s villager-act-btn" data-act="find-villager" data-tip="Pan and zoom camera to this villager">Find Me</button>
       </div>
     </div>` : '';
 
@@ -373,8 +416,8 @@ export function createUI(world, view, actions) {
     const slice = state.villagers.slice(villagerPage * perPage, villagerPage * perPage + perPage);
 
     return profile + `<div class="entries villager-roster">${slice.map(villager =>
-      `<button class="gu-btn s entry" data-villager="${villager.id}" aria-pressed="${selected === villager}">
-      ${portrait(villager, 'thumb')}<span>${escape(villager.name)}</span></button>`).join('')}</div>${renderPager(villagerPage, totalPages, 'vil-page')}`;
+      `<button class="gu-btn s entry${villager.illness ? ' is-sick' : ''}${villager.special?.golden ? ' is-golden' : ''}" data-villager="${villager.id}" aria-pressed="${selected === villager}">
+      ${portrait(villager, 'thumb')}<span>${escape(villager.name)}${villager.special?.golden ? ' ★' : ''}${villager.illness ? ' ⚠' : ''}</span></button>`).join('')}</div>${renderPager(villagerPage, totalPages, 'vil-page')}`;
   }
 
   function renderBuildings() {
@@ -519,73 +562,63 @@ export function createUI(world, view, actions) {
   }
 
   function renderAchievements() {
-    const completedLandmarks = Object.keys(landmarks).filter(id => state.worldFlags[id]).length;
-    const totalLandmarks = Object.keys(landmarks).length;
-    const completedBuilds = state.buildings.filter(b => b.state === 'completed').length;
-    const learnedResearch = Object.keys(researchProjects).filter(id => state.abilities[id]).length;
-    const totalResearch = Object.keys(researchProjects).length;
-    const discoveredFinds = Object.values(state.collectionProgress).filter(e => e.discovered).length;
-    const totalFinds = assets.collectibles.length;
-    const hasMaster = state.villagers.some(v => Object.keys(villagerSkills).some(s => skillProgress(v, s).tier >= 2));
+    const milestoneStates = ACHIEVEMENT_DEFS.map(def => ({ ...def, ...def.eval(world) }));
+    const challengeStates = CHALLENGE_DEFS.map(def => ({ ...def, ...def.eval(world) }));
+    const doneMilestones = milestoneStates.filter(c => c.done).length;
+    const doneChallenges = challengeStates.filter(c => c.done).length;
 
-    const cards = [
-      {
-        title: 'Island Restoration',
-        desc: 'Restore the ancient monument',
-        icon: 'trophy',
-        done: Boolean(state.achievements.island_restored),
-        current: completedLandmarks,
-        goal: totalLandmarks,
-      },
-      {
-        title: 'Village Builder',
-        desc: 'Complete 3 village buildings',
-        icon: 'build',
-        done: completedBuilds >= 3,
-        current: Math.min(3, completedBuilds),
-        goal: 3,
-      },
-      {
-        title: 'Island Scholar',
-        desc: 'Learn all 5 research skills',
-        icon: 'knowledge',
-        done: learnedResearch >= totalResearch,
-        current: learnedResearch,
-        goal: totalResearch,
-      },
-      {
-        title: 'Island Collector',
-        desc: 'Discover all 25 finds',
-        icon: 'discovery',
-        done: discoveredFinds >= totalFinds,
-        current: discoveredFinds,
-        goal: totalFinds,
-      },
-      {
-        title: 'Growing Village',
-        desc: 'Reach 8 living villagers',
-        icon: 'villagers',
-        done: state.villagers.length >= 8,
-        current: Math.min(8, state.villagers.length),
-        goal: 8,
-      },
-      {
-        title: 'Master Craft',
-        desc: 'Train any villager to Master',
-        icon: 'skillup',
-        done: hasMaster,
-        current: hasMaster ? 1 : 0,
-        goal: 1,
-      },
-    ];
-    const doneTotal = cards.filter(c => c.done).length;
+    const toolbar = `<div class="compact-toolbar">
+      <div class="compact-tabs" role="tablist">
+        <button type="button" class="gu-btn ${achTab === 'milestones' ? 'g' : 's'} compact-tab" data-act="ach-tab" data-arg="milestones">Milestones (${doneMilestones}/${milestoneStates.length})</button>
+        <button type="button" class="gu-btn ${achTab === 'challenges' ? 'g' : 's'} compact-tab" data-act="ach-tab" data-arg="challenges">Challenges (${doneChallenges}/${challengeStates.length})</button>
+      </div>
+      <span class="compact-chip">${ic('trophy', 12)} ${doneMilestones + doneChallenges}/${milestoneStates.length + challengeStates.length}</span>
+    </div>`;
 
-    return `<div class="compact-toolbar">
-      <span class="compact-meta-badge">${ic('trophy', 14)} Unlocked: <b>${doneTotal} / ${cards.length}</b></span>
-      <span class="compact-chip">${state.achievements.island_restored ? 'Island Restored' : 'In Progress'}</span>
-    </div>
+    if (achTab === 'challenges') {
+      const goldenVillager = state.villagers.find(v => v.special?.golden);
+      const champion = state.villagers.find(v => v.id === state.challenges?.championVillagerId || v.special?.champion);
+      return `${toolbar}
+      <div class="compact-card challenge-list">${challengeStates.map(ch => {
+        const pct = Math.round((ch.current / Math.max(1, ch.goal)) * 100);
+        let rewardUi = `<span class="challenge-reward-tag">Reward: ${escape(ch.reward)}</span>`;
+        if (ch.id === 'challenge_lone_survivor' && ch.done) {
+          rewardUi = `<span class="challenge-reward-tag is-claimed">★ Golden Skin Active${goldenVillager ? `: ${escape(goldenVillager.name)}` : ''}</span>`;
+        } else if (ch.id === 'challenge_speedrun' && ch.done) {
+          if (champion) {
+            rewardUi = `<span class="challenge-reward-tag is-claimed">⚡ Champion: ${escape(champion.name)} (Max Stats · 10× Speed)</span>`;
+          } else if (state.villagers.length) {
+            rewardUi = `<div class="champion-picker-row">
+              <select id="champion-select" class="champion-select" aria-label="Choose villager to promote">${state.villagers.map(v =>
+                `<option value="${v.id}">${escape(v.name)} (${escape(v.lifeStage)})</option>`).join('')}</select>
+              <button type="button" class="gu-btn g compact-mini-btn" data-act="promote-champion">Promote 10×</button>
+            </div>`;
+          }
+        } else if (ch.id === 'challenge_flawless_century' && ch.done) {
+          rewardUi = `<span class="challenge-reward-tag is-claimed">✓ Dev Mode Permanently Unlocked</span>`;
+        }
+        const statusChip = ch.done ? 'Unlocked' : ch.failed ? 'Failed' : `${ch.current}/${ch.goal}`;
+        return `<div class="challenge-card ${ch.done ? 'is-done' : ch.failed ? 'is-failed' : ''}">
+          <div class="ach-tile-head">
+            <span class="ach-tile-icon">${ic(ch.icon, 16)}</span>
+            <b>${escape(ch.title)}</b>
+            <span class="compact-chip ${ch.done ? 'is-done' : ''}">${statusChip}</span>
+          </div>
+          <p class="compact-desc">${escape(ch.desc)}</p>
+          <div class="need-bar-track ach-bar"><div class="need-bar-fill" data-tone="${ch.done ? 'good' : ch.failed ? 'low' : pct >= 40 ? 'warn' : 'low'}" style="width:${pct}%"></div></div>
+          ${rewardUi}
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    const perPage = 6;
+    const totalPages = Math.max(1, Math.ceil(milestoneStates.length / perPage));
+    achPage = Math.max(0, Math.min(totalPages - 1, achPage));
+    const slice = milestoneStates.slice(achPage * perPage, achPage * perPage + perPage);
+
+    return `${toolbar}
     <div class="compact-card ach-grid-card">
-      <div class="ach-grid">${cards.map(card => {
+      <div class="ach-grid">${slice.map(card => {
         const pct = Math.round((card.current / Math.max(1, card.goal)) * 100);
         return `<div class="ach-tile ${card.done ? 'is-done' : ''}">
           <div class="ach-tile-head">
@@ -597,7 +630,7 @@ export function createUI(world, view, actions) {
           <div class="need-bar-track ach-bar"><div class="need-bar-fill" data-tone="${card.done ? 'good' : pct >= 40 ? 'warn' : 'low'}" style="width:${pct}%"></div></div>
         </div>`;
       }).join('')}</div>
-    </div>`;
+    </div>${renderPager(achPage, totalPages, 'ach-page')}`;
   }
 
   function renderJournal() {
@@ -610,27 +643,121 @@ export function createUI(world, view, actions) {
 
     return `<div class="compact-toolbar">
       <span class="compact-meta-badge">${ic('book', 14)} Landmarks: <b>${doneCount} / ${entries.length}</b></span>
-      <span class="compact-chip">Drop villagers to work</span>
+      <button type="button" class="gu-btn s compact-mini-btn" data-act="open" data-arg="guide">${ic('curious', 12)} Field Guide</button>
     </div>
     <div class="compact-card journal-list">${slice.map(([id, puzzle]) => `
       <div class="journal-row ${state.worldFlags[id] ? 'is-done' : ''}">
         <div class="bld-card-head">
           <b>${escape(puzzle.label)}</b>
-          <span class="compact-chip ${state.worldFlags[id] ? 'is-done' : ''}">${state.worldFlags[id] ? 'Done' : 'Open'}</span>
+          <div class="journal-row-actions">
+            <button type="button" class="gu-btn s compact-mini-btn" data-act="pan-landmark" data-arg="${id}" data-tip="Pan camera to this landmark">Locate</button>
+            <span class="compact-chip ${state.worldFlags[id] ? 'is-done' : ''}">${state.worldFlags[id] ? 'Done' : 'Open'}</span>
+          </div>
         </div>
         <p class="compact-desc">${state.worldFlags[id] ? 'Completed' : escape(puzzle.hint)}</p>
       </div>`).join('')}</div>${renderPager(journalPage, totalPages, 'jrn-page')}`;
+  }
+
+  function renderGuide() {
+    const perPage = 6;
+    const totalPages = Math.max(1, Math.ceil(FEATURE_GUIDES.length / perPage));
+    const selectedIndex = FEATURE_GUIDES.findIndex(item => item.id === guideId);
+    const activeGuide = FEATURE_GUIDE_MAP[guideId] || FEATURE_GUIDES[0];
+    if (selectedIndex >= 0 && Math.floor(selectedIndex / perPage) !== guidePage) {
+      guidePage = Math.floor(selectedIndex / perPage);
+    }
+    guidePage = Math.max(0, Math.min(totalPages - 1, guidePage));
+    const slice = FEATURE_GUIDES.slice(guidePage * perPage, guidePage * perPage + perPage);
+    const target = activeGuide.resolveTarget?.(world);
+
+    return `<div class="compact-toolbar">
+      <span class="compact-meta-badge">${ic('curious', 14)} Topics: <b>${FEATURE_GUIDES.length}</b></span>
+      <button type="button" class="gu-btn s compact-mini-btn" data-act="replay-intro" data-tip="Replay the opening island cutscene">Replay Intro</button>
+    </div>
+    <div class="guide-topic-grid">${slice.map(item => `
+      <button type="button" class="gu-btn ${item.id === activeGuide.id ? 'g' : 's'} guide-topic-btn" data-act="guide-select" data-arg="${item.id}">
+        ${ic(item.icon, 13)}<span>${escape(item.title)}</span>
+      </button>`).join('')}</div>
+    ${renderPager(guidePage, totalPages, 'guide-page')}
+    <div class="compact-card guide-detail-card">
+      <div class="bld-card-head">
+        <span class="guide-detail-title">${ic(activeGuide.icon, 16)}<b>${escape(activeGuide.title)}</b></span>
+        ${target ? `<button type="button" class="gu-btn g compact-mini-btn" data-act="guide-locate" data-arg="${activeGuide.id}">Show on Map</button>` : ''}
+      </div>
+      <p class="compact-desc">${escape(activeGuide.summary)}</p>
+      <ol class="guide-steps-list">${activeGuide.steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol>
+      <p class="guide-tip-box">${escape(activeGuide.actionHint)}</p>
+    </div>`;
+  }
+
+  function refreshQuestTracker() {
+    if (!questTracker) return;
+    const active = getActiveChapter(world);
+    const sick = state.villagers.filter(v => v.illness || v.needs.health < 55)
+      .sort((a, b) => a.needs.health - b.needs.health);
+    const lowFood = state.villagers.length > 0 && state.resources.food <= STORY_CONFIG.lowFoodWarningThreshold;
+    const untendedGrave = (state.graves || []).find(g => !g.tendedCount);
+    const sig = [
+      active.chapter.id,
+      active.completedCount,
+      active.steps.map(s => `${s.done}:${s.progress}`).join(','),
+      sick.map(v => `${v.id}:${Math.ceil(v.needs.health)}`).join(','),
+      lowFood ? state.resources.food : '',
+      untendedGrave?.id || '',
+    ].join('|');
+    if (sig === lastQuestSignature) return;
+    lastQuestSignature = sig;
+
+    let alertHtml = '';
+    if (sick.length) {
+      const worst = sick[0];
+      const hp = Math.max(1, Math.ceil(worst.needs.health));
+      alertHtml = `<div class="quest-alert is-danger">
+        <span class="quest-alert-text">${ic('sick', 13)}<b>${escape(worst.name)} is sick (${hp}% HP)!</b>${sick.length > 1 ? ` +${sick.length - 1}` : ''}</span>
+        <button type="button" class="gu-btn d quest-mini-btn" data-act="pan-sick" data-arg="${worst.id}" data-tip="Pan to sick villager">Locate</button>
+      </div>`;
+    } else if (lowFood) {
+      alertHtml = `<div class="quest-alert is-warn">
+        <span class="quest-alert-text">${ic('warn', 13)}<b>Food critically low (${state.resources.food})!</b></span>
+        <button type="button" class="gu-btn g quest-mini-btn" data-act="pan-food" data-tip="Pan to nearest food source">Find Food</button>
+      </div>`;
+    } else if (untendedGrave) {
+      alertHtml = `<div class="quest-alert is-memorial">
+        <span class="quest-alert-text">${ic('info', 13)}<b>${escape(untendedGrave.name)}'s memorial awaits respects</b></span>
+        <button type="button" class="gu-btn s quest-mini-btn" data-act="pan-grave" data-arg="${untendedGrave.id}" data-tip="Pan to memorial cairn">Locate</button>
+      </div>`;
+    }
+
+    const chapterTag = active.chapter.number <= active.totalCount
+      ? `Ch. ${active.chapter.number}/${active.totalCount}`
+      : 'Restored';
+
+    questTracker.innerHTML = `<div class="quest-head">
+        <span class="quest-chapter-badge">${chapterTag}</span>
+        <b class="quest-title">${escape(active.chapter.shortTitle)}</b>
+        <div class="quest-head-btns">
+          <button type="button" class="gu-btn g quest-mini-btn" data-act="pan-objective" data-tip="Pan camera to where to act next">Show Me</button>
+          <button type="button" class="gu-btn s quest-mini-btn" data-act="open-guide" data-arg="${active.chapter.guideId}" data-tip="Open step-by-step feature guide">Guide</button>
+        </div>
+      </div>
+      <p class="quest-howto">${escape(active.chapter.howTo)}</p>
+      <div class="quest-steps">${active.steps.map(step =>
+        `<span class="quest-step-chip ${step.done ? 'is-done' : ''}">${step.done ? '✓ ' : ''}${escape(step.label)}: <b>${escape(step.progress)}</b></span>`
+      ).join('')}</div>
+      ${alertHtml}`;
+    hudWindows.syncWidget('quest');
   }
 
   function renderSettings() {
     return `${renderPreferences(preferences, actions.fullscreenSupported)}
     <div class="gu-div"></div>
     <section class="gu-col" aria-labelledby="hud-settings-title">
-      <h3 id="hud-settings-title" class="gu-h">HUD Layout</h3>
+      <h3 id="hud-settings-title" class="gu-h">HUD &amp; Guides</h3>
       <p class="compact-desc">Drag any HUD bar to move, drag a corner to scale, or drop one onto another to merge tabs.</p>
       <div class="gu-row">
         ${btn('Reset HUD layout', { v: 's', act: 'reset-hud' })}
-        ${btn('Island journal', { icon: 'book', v: 's', act: 'open', arg: 'journal' })}
+        ${btn('Field Guide', { icon: 'curious', v: 's', act: 'open', arg: 'guide' })}
+        ${btn('Island Journal', { icon: 'book', v: 's', act: 'open', arg: 'journal' })}
       </div>
     </section>
     <div class="gu-div"></div>
@@ -651,13 +778,26 @@ export function createUI(world, view, actions) {
   const views = {
     villagers: renderVillagers, buildings: renderBuildings, research: renderResearch,
     collection: renderBook, settings: renderSettings, journal: renderJournal,
+    guide: renderGuide,
     achievements: renderAchievements,
     save: () => `<p>The village saves automatically in this browser.</p>
       ${actions.lastSave?.() ? `<p>Last save: ${escape(new Date(actions.lastSave()).toLocaleString())}</p>` : ''}
       <div class="gu-row">${btn('Save now', { icon: 'save', act: 'save-now' })}
-        ${btn('Manage islands', { icon: 'load', v: 's', act: 'islands' })}</div>`,
+        ${btn('Manage islands', { icon: 'load', v: 's', act: 'islands' })}</div>
+      <div class="gu-div"></div>
+      <section class="gu-col">
+        <h3 class="gu-h">Testing &amp; Reset</h3>
+        <p class="compact-desc">Wipe all saved slots, HUD layout, and settings to restart from the initial state.</p>
+        <div class="gu-row">
+          ${confirmSaveWipe
+            ? `${btn('Confirm Wipe All Data', { icon: 'delete', v: 'd', act: 'wipe-save-confirm' })}
+               ${btn('Cancel', { v: 's', act: 'wipe-save-cancel' })}`
+            : btn('Wipe All Data (Start Fresh)', { icon: 'delete', v: 'd', act: 'wipe-save-arm' })}
+        </div>
+      </section>`,
     notifications: renderNotifications,
     pause: () => `<div class="entries">${btn('Resume', { icon: 'play', act: 'resume' })}
+      ${btn('Field Guide', { icon: 'curious', v: 's', act: 'open', arg: 'guide' })}
       ${btn('Save & Load', { icon: 'save', v: 's', act: 'open', arg: 'save' })}
       ${btn('Settings', { icon: 'gear', v: 's', act: 'open', arg: 'settings' })}
       ${btn('Main Menu', { icon: 'arrowL', v: 's', act: 'title' })}</div>`,
@@ -731,6 +871,16 @@ export function createUI(world, view, actions) {
       const label = `${rank.name} Lv. ${level}`;
       if (badge.textContent !== label) badge.textContent = label;
       if (badge.dataset.tier !== String(tier)) badge.dataset.tier = String(tier);
+    }
+
+    const holdBtn = element('btn-stop-moving');
+    if (holdBtn) {
+      const remaining = villager.holdStillUntil ? Math.ceil(villager.holdStillUntil - state.time.seconds) : 0;
+      const holding = remaining > 0;
+      const nextLabel = holding ? `Holding (${remaining}s)` : 'Stop Moving';
+      if (holdBtn.textContent !== nextLabel) holdBtn.textContent = nextLabel;
+      holdBtn.classList.toggle('g', holding);
+      holdBtn.classList.toggle('s', !holding);
     }
   }
 
@@ -815,15 +965,61 @@ export function createUI(world, view, actions) {
     const result = runDevAction(devBtn.dataset.dev, world, view, {
       resetHud: () => hudWindows.resetLayout(),
       openMenu: targetMenu => setMenu(targetMenu),
+      triggerStory: id => actions.triggerStory?.(id),
+      panToObjective: () => actions.panToObjective?.(),
+      wipeAllData: () => actions.wipeAllData?.({ enterFresh: true }),
     });
     if (result?.message) notify(result.message);
     refreshStatus();
     refreshProfile();
+    refreshQuestTracker();
     if (menu) renderMenu();
     hudWindows.refresh();
   });
 
-  element('debug').onclick = () => setDebug(!view.debug);
+  function syncDevLock() {
+    const unlocked = actions.isDevUnlocked ? actions.isDevUnlocked() : true;
+    const btnEl = element('debug');
+    if (!btnEl) return;
+    btnEl.dataset.locked = unlocked ? 'false' : 'true';
+    btnEl.textContent = unlocked ? 'Dev Mode' : '🔒 Dev Mode';
+    btnEl.dataset.tip = unlocked
+      ? 'Toggle Dev Mode & Debugger'
+      : 'Locked — Reach Day 100 without any villager dying to unlock Dev Mode (or launch with ?debug=1)';
+    if (!unlocked && view.debug) setDebug(false);
+  }
+
+  element('debug').onclick = () => {
+    if (actions.isDevUnlocked && !actions.isDevUnlocked()) {
+      notify('Dev Mode is locked! Complete the "Flawless Century" challenge (Day 100 with 0 deaths) to unlock it.');
+      return;
+    }
+    setDebug(!view.debug);
+  };
+  syncDevLock();
+  if (wipeDataBtn) {
+    wipeDataBtn.onclick = () => {
+      const now = performance.now();
+      if (now < wipeArmedUntil) {
+        clearTimeout(wipeArmTimer);
+        wipeArmedUntil = 0;
+        wipeDataBtn.textContent = 'Wipe Data';
+        wipeDataBtn.classList.remove('is-armed');
+        actions.wipeAllData?.({ enterFresh: true });
+        return;
+      }
+      wipeArmedUntil = now + 4500;
+      wipeDataBtn.textContent = 'Confirm Wipe?';
+      wipeDataBtn.classList.add('is-armed');
+      notify('Click "Confirm Wipe?" within 4 seconds to delete all saved data and start fresh.');
+      clearTimeout(wipeArmTimer);
+      wipeArmTimer = setTimeout(() => {
+        wipeArmedUntil = 0;
+        wipeDataBtn.textContent = 'Wipe Data';
+        wipeDataBtn.classList.remove('is-armed');
+      }, 4500);
+    };
+  }
   element('close-panel').onclick = closeMenu;
   element('back-panel').onclick = () => {
     const previous = menuHistory.pop();
@@ -881,6 +1077,31 @@ export function createUI(world, view, actions) {
     } else if (act === 'stop-work') {
       const villager = state.villagers.find(member => member.id === view.selectedVillager);
       if (villager) world.gameplay.stop(villager);
+    } else if (act === 'stop-moving') {
+      const villager = state.villagers.find(member => member.id === view.selectedVillager);
+      if (villager) {
+        world.gameplay.holdStill(villager);
+        notify(`${villager.name} is holding still for 20s — grab them easily!`);
+        refreshProfile();
+      }
+    } else if (act === 'find-villager') {
+      const villager = state.villagers.find(member => member.id === view.selectedVillager);
+      if (villager) {
+        actions.panToTarget?.(villager.position, STORY_CONFIG.villagerSpotlightZoom, villager.name, 'gold');
+      }
+    } else if (act === 'ach-tab') {
+      achTab = arg;
+      renderMenu();
+    } else if (act === 'ach-page') {
+      achPage = Number(arg) || 0;
+      renderMenu();
+    } else if (act === 'promote-champion') {
+      const selectEl = element('champion-select');
+      const chosenId = selectEl?.value || state.villagers[0]?.id;
+      const err = world.gameplay.promoteChampion(chosenId);
+      if (err) notify(err);
+      renderMenu();
+      refreshProfile();
     } else if (act === 'save-now') {
       notify(actions.save() ? 'Village saved.' : 'This browser could not save the village.');
       renderMenu();
@@ -918,6 +1139,48 @@ export function createUI(world, view, actions) {
     } else if (act === 'note-page') {
       notesPage = Number(arg) || 0;
       renderMenu();
+    } else if (act === 'pan-objective') {
+      actions.panToObjective?.();
+    } else if (act === 'pan-landmark') {
+      const puzzle = landmarks[arg];
+      actions.panToTarget?.(landmarkAnchor(world, arg), 2.5, puzzle?.label || arg, 'gold');
+    } else if (act === 'pan-sick') {
+      const sick = state.villagers.find(v => v.id === arg) || state.villagers.find(v => v.illness || v.needs.health < 55);
+      if (sick) {
+        actions.selectVillager(sick.id);
+        actions.panToTarget?.(sick.position, STORY_CONFIG.villagerSpotlightZoom, `${sick.name} — Heal Now!`, 'danger');
+      }
+    } else if (act === 'pan-food') {
+      const food = findNearestResource(world, 'food');
+      if (food) actions.panToTarget?.(food.position, 2.5, 'Gather Food Here', 'gold');
+    } else if (act === 'pan-grave') {
+      const grave = (state.graves || []).find(g => g.id === arg) || state.graves?.[state.graves.length - 1];
+      if (grave) actions.panToTarget?.(grave.position, 2.75, `${grave.name}'s Memorial`, 'gold');
+    } else if (act === 'open-guide') {
+      if (arg && FEATURE_GUIDE_MAP[arg]) guideId = arg;
+      setMenu('guide');
+    } else if (act === 'guide-select') {
+      guideId = arg;
+      renderMenu();
+    } else if (act === 'guide-page') {
+      guidePage = Number(arg) || 0;
+      renderMenu();
+    } else if (act === 'guide-locate') {
+      const target = FEATURE_GUIDE_MAP[arg]?.resolveTarget?.(world);
+      if (target) actions.panToTarget?.(target.position, target.zoom || 2.5, target.label, 'gold');
+      else notify('No active map target for this guide yet.');
+    } else if (act === 'replay-intro') {
+      closeMenu();
+      actions.triggerStory?.('intro_arrival');
+    } else if (act === 'wipe-save-arm') {
+      confirmSaveWipe = true;
+      renderMenu();
+    } else if (act === 'wipe-save-cancel') {
+      confirmSaveWipe = false;
+      renderMenu();
+    } else if (act === 'wipe-save-confirm') {
+      confirmSaveWipe = false;
+      actions.wipeAllData?.({ enterFresh: true });
     }
   });
   bindPreferences(content, actions.applyPreference);
@@ -963,7 +1226,10 @@ export function createUI(world, view, actions) {
     lastPopulation = undefined;
     lastClockVisualKey = undefined;
     lastSpeed = undefined;
-    villagerPage = buildingSitePage = journalPage = notesPage = 0;
+    villagerPage = buildingSitePage = journalPage = notesPage = guidePage = 0;
+    guideId = 'basics';
+    confirmSaveWipe = false;
+    lastQuestSignature = '';
     selection.replaceChildren();
     toasts.replaceChildren();
     element('overlays').querySelectorAll('input').forEach(input => { input.checked = false; });
@@ -971,6 +1237,7 @@ export function createUI(world, view, actions) {
     setMenu(null);
     setDebug(false);
     resources.forEach(({ id }, index) => { counters[index].querySelector('span').textContent = world.resources.get(id); });
+    refreshQuestTracker();
   }
 
   function togglePause() {
@@ -984,8 +1251,9 @@ export function createUI(world, view, actions) {
 
   const tooltips = bindSmartTooltips(document.querySelector('main'));
   return {
-    inspect, notify, selectVillager, refreshStatus, refreshProfile, closeMenu, togglePause,
-    resetForIsland, syncMusic, syncVolume,
+    inspect, notify, clearToasts, selectVillager, refreshStatus, refreshProfile, refreshQuestTracker, closeMenu, togglePause,
+    resetForIsland, syncMusic, syncVolume, syncDevLock,
     hudWindows, tooltips, setMenu, setDebug,
+    setDevPage: page => { devActionPage = Number(page) || 0; renderDevActions(); },
   };
 }

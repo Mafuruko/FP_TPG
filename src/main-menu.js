@@ -34,7 +34,7 @@ function drawWordmark(canvas) {
   }
 }
 
-export function createMainMenu(root, { saves, preferences, fullscreenSupported, applyPreference, enter, deleted, sound, icon }) {
+export function createMainMenu(root, { saves, preferences, fullscreenSupported, applyPreference, enter, deleted, wipeAll, sound, icon }) {
   let page = 'home';
   let confirmation;
   let message = '';
@@ -83,15 +83,23 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
 
   function confirm() {
     const { action, id } = confirmation;
+    const desc = action === 'wipe-all'
+      ? 'wipe all saved islands, HUD layout, and preferences and reset to the initial game state'
+      : action === 'delete'
+        ? `delete Island ${id} and its progress`
+        : `replace Island ${id} with a new island`;
     return `<h2 id="island-title">Are you sure?</h2>
-      <p>This will ${action === 'delete' ? `delete Island ${id} and its progress` : `replace Island ${id} with a new island`}.</p>
+      <p>This will ${desc}.</p>
       <div class="island-confirm-actions">${button('Cancel', 'cancel')}${button('Confirm', 'confirm', { primary: true })}</div>`;
   }
 
   function render() {
     const contents = page === 'home' ? home() : page === 'islands' ? islands() : page === 'confirm' ? confirm()
       : `<h2 id="island-title">Settings</h2>${renderPreferences(preferences, fullscreenSupported)}
-        ${button('Back', 'back', { glyph: 'arrowL' })}`;
+        <div class="island-settings-footer">
+          ${button('Back', 'back', { glyph: 'arrowL' })}
+          ${wipeAll ? button('Wipe All Data', 'wipe-all', { glyph: 'delete' }) : ''}
+        </div>`;
     root.innerHTML = `<section class="island-menu-card island-menu-${page}" role="dialog"
       aria-modal="true" aria-labelledby="island-title" tabindex="-1">
       ${contents}<p class="island-menu-error" role="status"></p>
@@ -107,7 +115,7 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
   function back() {
     if (page === 'home') return;
     if (page === 'confirm') focusId = confirmation;
-    page = page === 'confirm' ? 'islands' : 'home';
+    page = page === 'confirm' ? (confirmation?.action === 'wipe-all' ? 'settings' : 'islands') : 'home';
     message = '';
     render();
   }
@@ -127,6 +135,7 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
         break;
       case 'delete':
       case 'overwrite':
+      case 'wipe-all':
         confirmation = { action, id };
         page = 'confirm';
         break;
@@ -135,6 +144,12 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
         back();
         return;
       case 'confirm':
+        if (confirmation.action === 'wipe-all') {
+          page = 'home';
+          wipeAll?.();
+          message = 'All saved data has been wiped.';
+          break;
+        }
         page = 'islands';
         if (confirmation.action === 'delete') {
           if (saves.remove(confirmation.id)) deleted();

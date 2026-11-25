@@ -8,8 +8,8 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: 
 canvas.dragging { cursor: grabbing; }
 #island:focus { outline: none; }
 
-main[data-mode="menu"] :is(#studio-hud, #hud-windows, .bottom),
-main[data-mode="entering"] :is(#studio-hud, #hud-windows, .bottom) { visibility: hidden; }
+main[data-mode="menu"] :is(#studio-hud, #hud-windows, .bottom, #story-director),
+main[data-mode="entering"] :is(#studio-hud, #hud-windows, .bottom, #story-director) { visibility: hidden; }
 main:not([data-mode="playing"]) #island { pointer-events: none; }
 main[data-mode="playing"] :is(#studio-hud, #hud-windows, .bottom) { animation: island-hud-in 240ms ease-out both; }
 @keyframes island-hud-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
@@ -246,7 +246,7 @@ h2, h3, h4, p { margin: 0; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 10px 2px 6px;
+  padding: 2px 13px 2px 6px;
   border: 1px solid #2b1d15;
   background: #6c4d39;
   color: #f3e4c3;
@@ -773,10 +773,356 @@ h2, h3, h4, p { margin: 0; }
 .gu-sel:empty, .gu-toasts:empty { display: none; }
 .gu-toasts { z-index: 75; top: auto; bottom: 54px; right: 12px; }
 .gu-paused { top: auto; bottom: 8px; z-index: 65; }
+main[data-story="active"] .gu-paused { display: none; }
 #title-screen .gu-modal > * { pointer-events: auto; }
+
+.island-settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+#debug[data-locked="true"] {
+  opacity: 0.72;
+  background-color: #cfc09f;
+  color: #5b4836;
+}
+#wipe-data { font-size: 11px; padding: 3px 8px; }
+#wipe-data.is-armed {
+  background-color: #c83e33;
+  color: #fff5e1;
+  border-color: #3b1514;
+  animation: wipe-pulse 0.9s ease-in-out infinite alternate;
+}
+@keyframes wipe-pulse { from { filter: brightness(1); } to { filter: brightness(1.16); } }
+
+/* Floating Island Guide / Quest Tracker HUD Window */
+.quest-tracker {
+  width: min(372px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  overflow: hidden;
+}
+.quest-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.quest-chapter-badge {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  background: #4e6030;
+  color: #fff6dc;
+  border: 1px solid #2b3818;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 0.02em;
+}
+.quest-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.2;
+  color: #2b1d15;
+}
+.quest-head-btns { display: inline-flex; gap: 3px; flex-shrink: 0; }
+.quest-mini-btn, .compact-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px !important;
+  font-size: 10px !important;
+  line-height: 1.25;
+}
+.quest-howto {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.28;
+  color: #4f3a29;
+}
+.quest-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.quest-step-chip {
+  padding: 1px 6px;
+  font-size: 10px;
+  background: #e6d5b1;
+  border: 1px solid #8a6b43;
+  color: #3b2a22;
+}
+.quest-step-chip.is-done {
+  background: #cfe3b4;
+  border-color: #4f7b35;
+  color: #223b16;
+}
+.quest-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 1px solid #7d251e;
+  font-size: 10px;
+}
+.quest-alert.is-danger { background: #f2c4ba; border-color: #9e271e; color: #47110d; }
+.quest-alert.is-warn { background: #f5dfaa; border-color: #9c6a16; color: #4a3106; }
+.quest-alert.is-memorial { background: #ded9cc; border-color: #6c675c; color: #302d27; }
+.quest-alert-text { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.quest-alert-text svg { flex-shrink: 0; }
+
+/* Villager Illness Alert & Sick Roster Highlight */
+.villager-illness-alert {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 4px 6px;
+  background: #f2c4ba;
+  border: 1px solid #9e271e;
+  color: #47110d;
+  font-size: 11px;
+  font-weight: bold;
+  line-height: 1.25;
+}
+.villager-illness-alert svg { flex-shrink: 0; }
+.villager-roster .entry.is-sick {
+  background-color: #efc3b8;
+  border-color: #9e271e;
+  color: #47110d;
+}
+.villager-roster .entry.is-golden {
+  background-color: #f4df9b;
+  border-color: #9c6f11;
+  color: #4a3104;
+}
+.villager-special-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0; }
+.villager-special-chip {
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: bold;
+  border: 1px solid #3b2a22;
+}
+.villager-special-chip.is-gold { background: #f6d569; border-color: #8c600b; color: #472e03; }
+.villager-special-chip.is-champ { background: #bfe8f2; border-color: #2c6d82; color: #123742; }
+.villager-children-row { margin-top: 4px; font-size: 11px; color: #5c4630; }
+.villager-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 6px;
+}
+.villager-act-btn {
+  width: 100%;
+  justify-content: center;
+  padding: 4px 4px !important;
+  font-size: 11px !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Exclusive Challenges inside Achievements */
+.challenge-list { gap: 5px; }
+.challenge-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 7px;
+  background: #efe2c4;
+  border: 1px solid #8a6b43;
+}
+.challenge-card.is-done { background: #f4e4b3; border-color: #a67818; }
+.challenge-card.is-failed { background: #e8d8ce; border-color: #8f635a; opacity: 0.85; }
+.challenge-reward-tag {
+  font-size: 10px;
+  font-weight: bold;
+  color: #5c431f;
+  padding: 2px 5px;
+  background: #e4d2a6;
+  border-left: 3px solid #9c7228;
+}
+.challenge-reward-tag.is-claimed {
+  background: #d7e7b8;
+  border-left-color: #4c7d2c;
+  color: #1f3c12;
+}
+.champion-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+.champion-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 5px;
+  font-size: 11px;
+  background: #fff7e2;
+  color: #2b1d15;
+  border: 1px solid #5c4328;
+}
+
+/* Field Guide & Journal Enhancements */
+.journal-row-actions { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.guide-topic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 5px;
+}
+.guide-topic-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-start;
+  padding: 3px 6px !important;
+  font-size: 11px !important;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.guide-topic-btn svg { flex-shrink: 0; }
+.guide-detail-card { margin-top: 5px; gap: 5px; }
+.guide-detail-title { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.guide-steps-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #362519;
+}
+.guide-tip-box {
+  margin: 0;
+  padding: 4px 6px;
+  background: #e4d3aa;
+  border-left: 3px solid #7d5b34;
+  font-size: 10px;
+  line-height: 1.3;
+  color: #3b2a22;
+}
+
+/* Compact Action-First Story Directive Overlay (non-blocking center view) */
+.story-director {
+  position: absolute;
+  inset: 0;
+  z-index: 88;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 12px 16px 48px;
+  background: none;
+}
+.story-head-right { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.story-dots { display: inline-flex; align-items: center; gap: 4px; }
+.story-dot {
+  width: 7px;
+  height: 7px;
+  background: rgba(59, 42, 34, 0.25);
+  border: 1px solid #3b2a22;
+}
+.story-dot.is-done { background: #6b9944; }
+.story-dot.is-active { background: #d9964e; transform: scale(1.18); }
+.story-director[data-tone="danger"] .story-dot.is-active { background: #c83e33; }
+
+.story-card {
+  pointer-events: auto;
+  width: min(470px, calc(100vw - 28px));
+  background: #f1e3be;
+  color: #2f2017;
+  border: 2px solid #3b2a22;
+  box-shadow: inset 0 0 0 2px #fff2cc, inset 0 0 0 4px #c59b62, 0 5px 0 rgba(24, 16, 10, 0.48);
+  padding: 8px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.story-director[data-waiting="false"] .story-card { cursor: pointer; }
+.story-director[data-tone="danger"] .story-card {
+  background: #f6dfd5;
+  border-color: #6b1a16;
+  box-shadow: inset 0 0 0 2px #fff0ea, inset 0 0 0 4px #c86454, 0 5px 0 rgba(48, 12, 10, 0.55);
+}
+.story-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.story-card-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #dfca9a;
+  border: 2px solid #3b2a22;
+}
+.story-director[data-tone="danger"] .story-card-icon {
+  background: #e9a395;
+  border-color: #6b1a16;
+}
+.story-card-titles { flex: 1 1 auto; min-width: 0; }
+.story-card h2 {
+  margin: 0 0 2px;
+  font-size: 13px;
+  line-height: 1.15;
+  color: #2b1d15;
+}
+.story-step-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  background: #d8c296;
+  border: 1px solid #6b4f32;
+  font-size: 10px;
+  font-weight: bold;
+}
+.story-caption {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #3c2a1d;
+}
+.story-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.story-btn-group { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; width: 100%; justify-content: flex-end; }
+.story-wait-pill {
+  margin-right: auto;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: bold;
+  background: #dce8c1;
+  border: 1px solid #4f7b35;
+  color: #223b16;
+}
+.story-director[data-tone="danger"] .story-wait-pill {
+  background: #f2c4ba;
+  border-color: #9e271e;
+  color: #55120e;
+}
+.story-btn { padding: 3px 9px !important; font-size: 11px !important; font-weight: bold; }
 
 @media (max-width: 680px) {
   #controls { display: none; }
-  .villager-needs-bars, .villager-roster, .research-grid, .ach-grid { grid-template-columns: 1fr; }
+  .villager-needs-bars, .villager-roster, .research-grid, .ach-grid, .guide-topic-grid { grid-template-columns: 1fr; }
   .bld-picker-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quest-tracker { width: min(300px, calc(100vw - 16px)); }
 }

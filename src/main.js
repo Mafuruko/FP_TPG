@@ -14,11 +14,13 @@ import { createWorld, enableWildlifeDirector, previewPlacement, updateIslandPrev
 import { cameraWorldRect } from './wildlife-director.js';
 import { startGameplay } from './gameplay.js';
 import { landmarks } from './progression.js';
-import { advanceOffline, createIslandSaves, restoreVillage } from './save.js';
+import { advanceOffline, createIslandSaves, loadUnlocks, restoreVillage, saveUnlocks, wipeAllGameData } from './save.js';
 import { runDevAction } from './dev-tools.js';
 import { createMainMenu } from './main-menu.js';
 import { createMenuSounds, loadPreferences, storePreferences } from './preferences.js';
 import { lerp, smooth } from './climate.js';
+import { buildEventSequence, ensureStoryState, getActiveChapter, STORY_CONFIG } from './story.js';
+import { createStoryDirector } from './story-ui.js';
 
 const assets = createAssets({ island, character, building, collectible, resource, wildlife, ui: studioUI });
 const world = createWorld(assets);
@@ -27,6 +29,7 @@ try { storage = window.localStorage; } catch { /* Continue without persistence. 
 const pristine = structuredClone(world.state);
 const saves = createIslandSaves(storage, world);
 const settings = loadPreferences(storage);
+let unlocks = loadUnlocks(storage);
 const sound = createMenuSounds(settings);
 const fullscreenSupported = document.fullscreenEnabled && Boolean(document.documentElement.requestFullscreen);
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -39,8 +42,9 @@ let scenicTime = 0;
 let returnCamera;
 const app = document.querySelector('main');
 const title = document.getElementById('title-screen');
-const hud = ['studio-hud', 'hud-windows', 'panel', 'debug-panel'].map(id => document.getElementById(id));
+const hud = ['studio-hud', 'hud-windows', 'panel', 'debug-panel', 'story-director'].map(id => document.getElementById(id));
 hud.push(document.querySelector('.bottom'));
+const storyRoot = document.getElementById('story-director');
 const size = world.map.meta.tileSize;
 const canvas = document.getElementById('island');
 const dropHint = document.getElementById('drop-action');
@@ -52,7 +56,7 @@ const cameraController = createCameraController(camera);
 const devOnEntry = new URLSearchParams(location.search).get('debug') === '1';
 const view = {
   selectedVillager: null, selectedObject: null, debug: false, mode: 'menu', settings,
-  overlays: new Set(), placementType: null, placement: null, drag: null,
+  overlays: new Set(), placementType: null, placement: null, drag: null, storyBeacon: null,
 };
 const renderer = createRenderer(canvas, world, renderCamera, view);
 const center = () => ({ x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 });
@@ -117,17 +121,156 @@ function selectVillager(id) {
   ui.selectVillager(selectedVillager());
 }
 
+function isDevUnlocked() {
+  return devOnEntry || Boolean(unlocks.devMode || world.state.achievements?.challenge_flawless_century);
+}
+
+function panToTarget(position, targetZoom = STORY_CONFIG.defaultSpotlightZoom, label = '', tone = 'gold', options = {}) {
+  if (!position) return;
+  const duration = options.duration ?? (reducedMotion.matches ? STORY_CONFIG.reducedPanDurationSec : STORY_CONFIG.panDurationSec);
+  cameraController.panTo(position, targetZoom, center(), { duration, immediate: options.immediate });
+  if (label !== null) {
+    view.storyBeacon = {
+      position: { x: position.x, y: position.y },
+      label: label || '',
+      tone,
+      dragFrom: options.dragFrom || null,
+      excludeId: options.excludeId || null,
+      until: options.persist ? null : performance.now() + 5500,
+    };
+  }
+}
+
+function panToObjective() {
+  const { chapter, target } = getActiveChapter(world);
+  if (!target?.position) return;
+  panToTarget(target.position, target.zoom || STORY_CONFIG.defaultSpotlightZoom, target.label || chapter.shortTitle, 'gold', {
+    dragFrom: target.dragFrom || null,
+  });
+}
+
+function triggerStory(eventId, payload = {}) {
+  const sequence = buildEventSequence(eventId, payload, world);
+  if (!sequence) return false;
+  sound('test');
+  return storyDirector.play(sequence);
+}
+
+function wipeAllAndRestart({ enterFresh = false } = {}) {
+  wipeAllGameData(storage);
+  Object.assign(settings, loadPreferences(storage));
+  unlocks = loadUnlocks(storage);
+  ui.syncVolume();
+  ui.hudWindows.resetLayout();
+  storyDirector.reset();
+  clearPointer();
+  touchPointers.clear();
+  pinchState = null;
+  hiddenAt = null;
+  if (enterFresh) {
+    const freshSave = { state: structuredClone(pristine), savedAt: Date.now() };
+    activeSlot = 1;
+    saves.write(1, freshSave.state, freshSave.savedAt);
+    replaceIsland(freshSave);
+    title.hidden = true;
+    title.inert = true;
+    setMode('playing');
+    resetCamera();
+    ui.refreshStatus();
+    ui.refreshQuestTracker();
+    ui.syncDevLock();
+    const story = ensureStoryState(world.state);
+    story.seenEvents.intro_arrival = true;
+    triggerStory('intro_arrival');
+    saveActive();
+    ui.notify('All saved data wiped. Started a fresh island!');
+    return;
+  }
+  activeSlot = undefined;
+  loadPreview();
+  ui.syncDevLock();
+  scenicCamera(0);
+}
+
 const ui = createUI(world, view, {
   selectVillager, resetCamera, adjustZoom, fitCamera,
   preferences: settings, fullscreenSupported, applyPreference, openTitle,
+  panToTarget, panToObjective, triggerStory, wipeAllData: wipeAllAndRestart, isDevUnlocked,
   save: () => saveActive(),
   lastSave: () => saves.read(activeSlot)?.savedAt,
-  focusVillager: () => { if (selectedVillager()) centerOn(selectedVillager().position); },
+  focusVillager: () => { if (selectedVillager()) panToTarget(selectedVillager().position, Math.max(camera.zoom, 2.6), selectedVillager().name, 'gold'); },
+});
+const storyDirector = createStoryDirector(storyRoot, {
+  world, view, icon: assets.ui.GameUI.ic, reducedMotion,
+  panTo: (pos, zoom, opts) => cameraController.panTo(pos, zoom, center(), opts),
+  onOpen: () => {
+    view.storyActive = true;
+    ui.clearToasts();
+  },
+  onAction: (type, arg) => {
+    if (type === 'open-menu') ui.setMenu(arg);
+    else if (type === 'select-villager') {
+      selectVillager(arg);
+      const v = world.state.villagers.find(member => member.id === arg);
+      if (v) panToTarget(v.position, STORY_CONFIG.villagerSpotlightZoom, v.name, 'gold');
+    }
+  },
+  onWipeFresh: () => wipeAllAndRestart({ enterFresh: true }),
+  onOpenTitle: () => openTitle('islands'),
 });
 const menu = createMainMenu(title, {
   saves, preferences: settings, fullscreenSupported, applyPreference, enter: enterIsland, deleted: loadPreview,
+  wipeAll: () => wipeAllAndRestart({ enterFresh: false }),
   sound, icon: assets.ui.GameUI.ic,
 });
+
+function handleGameplayEvent(ev) {
+  if (view.mode !== 'playing') return;
+  const story = ensureStoryState(world.state);
+  if (ev.type === 'illness' && !story.seenEvents.first_illness) {
+    story.seenEvents.first_illness = true;
+    triggerStory('first_illness', ev);
+  } else if (ev.type === 'death') {
+    if (ev.cause === 'sickness' && !story.seenEvents.first_sickness_death) {
+      story.seenEvents.first_sickness_death = true;
+      triggerStory('first_sickness_death', ev);
+    } else if (ev.cause === 'starvation' && !story.seenEvents.first_starvation_death) {
+      story.seenEvents.first_starvation_death = true;
+      triggerStory('first_starvation_death', ev);
+    } else if (ev.cause === 'old_age' && !story.seenEvents.first_old_age_death) {
+      story.seenEvents.first_old_age_death = true;
+      triggerStory('first_old_age_death', ev);
+    }
+  } else if (ev.type === 'birth' && !story.seenEvents.first_birth) {
+    story.seenEvents.first_birth = true;
+    triggerStory('first_birth', ev);
+  } else if (ev.type === 'landmark') {
+    const key = `landmark_${ev.puzzleId}`;
+    if (!story.seenEvents[key]) {
+      story.seenEvents[key] = true;
+      triggerStory('landmark_reveal', ev);
+    }
+  } else if (ev.type === 'research') {
+    const key = `research_${ev.abilityId}`;
+    if (!story.seenEvents[key]) {
+      story.seenEvents[key] = true;
+      triggerStory('feature_research', ev);
+    }
+  } else if (ev.type === 'collectible' && ev.firstEver && !story.seenEvents.first_collectible) {
+    story.seenEvents.first_collectible = true;
+    triggerStory('first_collectible', ev);
+  } else if (ev.type === 'achievement') {
+    sound('test');
+    if (ev.achievement?.id === 'challenge_flawless_century') {
+      unlocks.devMode = true;
+      saveUnlocks(storage, unlocks);
+      ui.syncDevLock();
+    }
+  } else if (ev.type === 'colony_lost') {
+    triggerStory('colony_lost', ev);
+  }
+  ui.refreshQuestTracker();
+}
 
 function setMode(next) {
   view.mode = app.dataset.mode = next;
@@ -140,13 +283,16 @@ function saveActive(now = Date.now()) {
 }
 
 function replaceIsland(save) {
-  view.selectedVillager = view.selectedObject = view.placementType = view.placement = null;
+  view.selectedVillager = view.selectedObject = view.placementType = view.placement = view.storyBeacon = null;
   view.overlays.clear();
+  storyDirector.reset();
   restoreVillage(world, save ?? { state: structuredClone(pristine) });
   gameplay = startGameplay(world);
   gameplay.subscribe(ui.notify);
+  gameplay.subscribeEvents(handleGameplayEvent);
   wildlifeDirector = enableWildlifeDirector(world);
   ui.resetForIsland();
+  ui.syncDevLock();
 }
 
 function loadPreview() {
@@ -234,13 +380,20 @@ function advanceEntry(dt) {
   centerOn({ x: lerp(entry.from.x, villageCenter.x, t), y: lerp(entry.from.y, villageCenter.y, t) });
   if (progress < 1) return;
   title.hidden = true;
-  const { offline } = entry;
+  const { offline, fresh } = entry;
   entry = null;
   setMode('playing');
   ui.refreshStatus();
+  ui.refreshQuestTracker();
   if (devOnEntry) ui.setDebug(true);
   canvas.focus({ preventScroll: true });
-  if (offline >= 10) ui.notify('Your villagers continued their routines while you were away.');
+  const story = ensureStoryState(world.state);
+  if ((fresh || !story.seenEvents.intro_arrival) && !world.state.worldFlags.light_campfire) {
+    story.seenEvents.intro_arrival = true;
+    triggerStory('intro_arrival');
+  } else if (offline >= 10) {
+    ui.notify('Your villagers continued their routines while you were away.');
+  }
   saveActive();
 }
 
@@ -320,6 +473,7 @@ function command(position) {
     if (!villager) {
       const puzzle = landmarks[hit.entity.puzzleId];
       if (puzzle) ui.notify(puzzle.hint);
+      else if (hit.hit === 'grave') ui.notify(`${hit.entity.name}'s memorial (Day ${hit.entity.day}). Drop a villager here to pay respects.`);
       else if (hit.hit === 'collectible') ui.notify('Drop a villager on this find to collect it.');
       return;
     }
@@ -365,6 +519,7 @@ function positionDropHint() {
 
 function liftVillager() {
   if (!pointer?.villager || view.drag) return;
+  delete pointer.villager.holdStillUntil;
   world.heldVillager = pointer.villager.id;
   view.drag = { id: world.heldVillager, startedAt: performance.now() };
   updateDragPosition();
@@ -494,6 +649,18 @@ window.addEventListener('keydown', event => {
     if (event.key === 'Escape' && view.mode === 'menu') menu.closePanel();
     return;
   }
+  if (storyDirector.isActive()) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      storyDirector.close();
+      return;
+    }
+    if ((event.code === 'Space' || event.key === 'Enter') && !storyDirector.getState()?.waiting) {
+      event.preventDefault();
+      storyDirector.advance();
+      return;
+    }
+  }
   if (event.code === 'Space' && (event.target === document.body || event.target === canvas)) {
     event.preventDefault();
     ui.togglePause();
@@ -516,11 +683,14 @@ scenicCamera(0);
 menu.show();
 
 window.__ISLAND_DEV__ = {
-  world, view, camera, renderCamera, cameraController, renderer, ui,
-  selectVillager,
+  world, view, camera, renderCamera, cameraController, renderer, ui, storyDirector,
+  selectVillager, panToTarget, panToObjective, triggerStory, wipeAllAndRestart,
   runDevAction: id => runDevAction(id, world, view, {
     resetHud: () => ui.hudWindows.resetLayout(),
     openMenu: next => ui.setMenu(next),
+    triggerStory,
+    panToObjective,
+    wipeAllData: () => wipeAllAndRestart({ enterFresh: true }),
   }),
 };
 
@@ -538,7 +708,10 @@ function frame(now) {
     scenicTime += dt;
     scenicCamera(scenicTime);
   } else if (view.mode === 'entering') advanceEntry(dt);
-  else cameraController.update(dt);
+  else {
+    cameraController.update(dt);
+    storyDirector.update(dt);
+  }
   syncRenderCamera();
   wildlifeDirector.setView(cameraWorldRect(renderCamera, canvas.clientWidth, canvas.clientHeight));
   if (view.mode === 'menu') updateIslandPreview(world, dt);
@@ -555,6 +728,7 @@ function frame(now) {
   if (view.mode === 'playing' && now - lastStatus >= 100) {
     ui.refreshStatus();
     ui.refreshProfile();
+    ui.refreshQuestTracker();
     lastStatus = now;
   }
   last = now;
