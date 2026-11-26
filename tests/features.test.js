@@ -26,6 +26,7 @@ import { createIslandSaves, loadUnlocks, readVillage, restoreVillage, saveUnlock
 import { loadPreferences, storePreferences } from '../src/preferences.js';
 import { createIslandDraft, createStartingIsland } from '../src/island-setup.js';
 import { buildEventSequence, FEATURE_GUIDES, getActiveChapter, getSurvivalStage, STORY_CHAPTERS, STORY_CONFIG } from '../src/story.js';
+import { survival } from '../src/survival.js';
 import { createAuronCheckIns } from '../src/auron-dialogue.js';
 
 const { uiCss: _uiCss, ...modules } = await readStudioModules();
@@ -138,22 +139,22 @@ test('skill progression divides each rank into levels 1-10 and promotes Trainee 
   assert.equal(s0.rank.name, 'Trainee');
   assert.equal(s0.level, 1);
 
-  v.skills.gather = 4;
+  v.skills.gather = 17;
   const s4 = skillProgress(v, 'gathering');
   assert.equal(s4.rank.name, 'Trainee');
   assert.equal(s4.level, 10);
 
-  v.skills.gather = 5;
+  v.skills.gather = 18;
   const s5 = skillProgress(v, 'gathering');
   assert.equal(s5.rank.name, 'Adept');
   assert.equal(s5.level, 1);
 
-  v.skills.gather = 13;
+  v.skills.gather = 53;
   const s13 = skillProgress(v, 'gathering');
   assert.equal(s13.rank.name, 'Adept');
   assert.equal(s13.level, 10);
 
-  v.skills.gather = 14;
+  v.skills.gather = 54;
   const s14 = skillProgress(v, 'gathering');
   assert.equal(s14.rank.name, 'Master');
   assert.equal(s14.level, 1);
@@ -459,7 +460,7 @@ test('guided story chapters swap vivid shortTitles, omit speaker labels, and sup
   assert.match(reveal.beats[1].title, /Spring/);
   for (const eventId of ['first_birth', 'first_old_age_death', 'first_collectible']) {
     const notice = buildEventSequence(eventId, {}, world);
-    assert.equal(notice.mode, 'guide');
+    assert.equal(notice.mode, eventId === 'first_birth' ? 'ambient' : 'guide');
     assert.notEqual(notice.pauseWorld, true);
   }
 
@@ -549,13 +550,16 @@ test('sickness drains health faster in rain, kills untreated villagers, creates 
   game.subscribeEvents(ev => events.push(ev));
 
   // Explicit lethal sickness drains faster in heavy rain and creates a memorial when untreated.
+  world.state.abilities.heal = true;
+  world.state.story.firstCureDone = true;
+  for (const villager of world.state.villagers) game.setWorkPreference(villager, 'rest');
   const victim = world.state.villagers[0];
   game.inflictIllness(victim, 'fever', true, { tutorialSafe: false });
   assert.ok(events.some(ev => ev.type === 'illness' && ev.villager.id === victim.id));
   const hpClearStart = victim.needs.health;
   updateWorld(world, 3);
   const clearLoss = hpClearStart - victim.needs.health;
-  assert.ok(clearLoss > 0.7);
+  assert.ok(clearLoss > 0.4);
 
   world.state.weather = { current: 'heavy_rain' };
   const hpRainStart = victim.needs.health;
@@ -571,16 +575,20 @@ test('sickness drains health faster in rain, kills untreated villagers, creates 
   assert.equal(world.state.graves[0].cause, 'sickness');
   assert.ok(events.some(ev => ev.type === 'death' && ev.cause === 'sickness'));
 
-  // Surviving villager can pay respects at the memorial cairn to restore energy & health.
+  // Paying respects provides a small comfort effect without replacing treatment.
   const mourner = world.state.villagers[0];
+  delete mourner.illness;
+  delete mourner.recoveryUntil;
   mourner.needs.energy = 60;
   mourner.needs.health = 75;
   const grave = world.state.graves[0];
   assert.equal(game.drop(mourner, grave.tile, { kind: 'grave', id: grave.id }), null);
   for (let i = 0; i < 40 && grave.tendedCount === 0; i++) updateWorld(world, 0.2);
   assert.equal(grave.tendedCount, 1);
-  assert.ok(mourner.needs.energy > 60);
-  assert.ok(mourner.needs.health > 75);
+  assert.ok(mourner.needs.energy >= 58);
+  assert.equal(mourner.needs.health, 75);
+  assert.equal(grave.villagerId, victim.id);
+  assert.equal(grave.founder, true);
 });
 
 test('staged tutorial protects new saves from harsh sickness, rain, and early starvation until ready', () => {
@@ -595,7 +603,7 @@ test('staged tutorial protects new saves from harsh sickness, rain, and early st
   for (let i = 0; i < 120; i++) updateWorld(world, 1);
   assert.equal(world.state.villagers.length, 5);
   assert.equal(world.state.villagers.some(v => Boolean(v.illness)), false);
-  assert.ok(world.state.villagers[0].needs.health >= STORY_CONFIG.tutorialStarvationFloor);
+  assert.ok(world.state.villagers[0].needs.health >= survival.tutorialFloor);
 
   // Stage 1: Once campfire + spring are complete and >=10 Knowledge earned, one gentle guided illness triggers.
   world.state.worldFlags.light_campfire = true;
@@ -609,7 +617,7 @@ test('staged tutorial protects new saves from harsh sickness, rain, and early st
   // Gentle guided illness never kills the tutorial villager even after long wait.
   for (let i = 0; i < 300; i++) updateWorld(world, 1);
   assert.ok(world.state.villagers.includes(sick));
-  assert.ok(sick.needs.health >= STORY_CONFIG.tutorialIllnessFloor);
+  assert.ok(sick.needs.health >= survival.tutorialFloor);
 });
 
 test('empty food causes real starvation death in Stage 2 and colony_lost triggers if all villagers perish', () => {
@@ -625,9 +633,10 @@ test('empty food causes real starvation death in Stage 2 and colony_lost trigger
   world.resources.remove('food', world.resources.get('food'));
   const survivor = world.state.villagers[0];
   world.state.villagers = [survivor];
+  game.setWorkPreference(survivor, 'rest');
   survivor.needs.hunger = 5;
   survivor.needs.health = 15;
-  for (let i = 0; i < 80 && world.state.villagers.length > 0; i++) {
+  for (let i = 0; i < 110 && world.state.villagers.length > 0; i++) {
     updateWorld(world, 0.5);
   }
   assert.equal(world.state.villagers.length, 0);

@@ -1,9 +1,9 @@
 const key = 'island-colony.settings.v1';
 const defaults = { master: 100, music: 100, sfx: 35, voice: 40, voiceMute: false, dialogueSpeed: 'normal',
   fullscreen: false, integer: false, lightning: false };
-const sliders = { master: 'Master volume', music: 'Music volume', sfx: 'SFX / Ambient volume', voice: 'Dialogue volume' };
-const switches = { voiceMute: 'Mute dialogue voice', fullscreen: 'Fullscreen / Windowed',
-  integer: 'Pixel-perfect integer scaling', lightning: 'Weather lightning flashes' };
+const sliders = { master: 'Master volume', music: 'Music volume', sfx: 'Sound effects & ambience', voice: 'Auron voice volume' };
+const switches = { voiceMute: 'Mute Auron’s voice', fullscreen: 'Fullscreen',
+  integer: 'Integer scaling', lightning: 'Lightning flashes' };
 const textSpeeds = { slow: 'Slow', normal: 'Normal', fast: 'Fast', instant: 'Instant' };
 
 const minimum = name => name === 'sfx' || name === 'voice' ? 0 : 1;
@@ -37,21 +37,28 @@ export function storePreferences(storage, settings) {
 }
 
 export function renderPreferences(settings, fullscreenSupported) {
-  const ranges = Object.entries(sliders).map(([id, label]) => `
+  const range = id => `
     <label class="island-range">
-      <span>${label}</span><output>${settings[id]}%</output>
+      <span>${sliders[id]}</span><output>${settings[id]}%</output>
       <input type="range" data-preference="${id}" min="${minimum(id)}" max="100" value="${settings[id]}">
-    </label>`).join('');
-  const toggles = Object.entries(switches).map(([id, label]) => `
+    </label>`;
+  const toggle = id => `
     <label class="island-switch">
-      <span>${label}</span><input type="checkbox" data-preference="${id}" ${settings[id] ? 'checked' : ''}
+      <span>${switches[id]}</span><input type="checkbox" data-preference="${id}" ${settings[id] ? 'checked' : ''}
         ${id === 'fullscreen' && !fullscreenSupported ? 'disabled' : ''}>
-    </label>`).join('');
-  const speed = `<label class="island-switch"><span>Dialogue text speed</span>
+    </label>`;
+  const speed = `<label class="island-switch"><span>Text speed</span>
     <select class="gu-in" data-preference="dialogueSpeed">${Object.entries(textSpeeds).map(([id, label]) =>
       `<option value="${id}" ${settings.dialogueSpeed === id ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`;
-  return `<div class="island-preferences">${ranges}<div class="island-switches">${speed}${toggles}</div>
-    <p class="fullscreen-status" role="status">${fullscreenSupported ? '' : 'Fullscreen is unavailable in this browser.'}</p></div>`;
+  return `<div class="island-preferences">
+    <section class="settings-audio" aria-label="Audio">${['master', 'music', 'sfx'].map(range).join('')}</section>
+    <details class="settings-section"><summary>Display &amp; comfort</summary><div class="island-switches">
+      ${['fullscreen', 'integer', 'lightning'].map(toggle).join('')}
+      <p class="fullscreen-status" role="status">${fullscreenSupported ? '' : 'Fullscreen is unavailable in this browser.'}</p>
+    </div></details>
+    <details class="settings-section"><summary>Dialogue</summary>
+      ${range('voice')}<div class="island-switches">${speed}${toggle('voiceMute')}</div>
+    </details></div>`;
 }
 
 export function bindPreferences(root, apply) {
@@ -69,6 +76,11 @@ export function bindPreferences(root, apply) {
 }
 
 export function createMenuSounds(settings) {
+  const tones = {
+    button: [390, 280, 0.055], test: [520, 690, 0.055],
+    'command-pickup': [310, 480, 0.035], 'command-land': [330, 225, 0.044],
+    'command-send': [390, 510, 0.028], 'command-invalid': [240, 180, 0.025],
+  };
   let context;
   let last = -Infinity;
   return (sound = 'button') => {
@@ -84,11 +96,12 @@ export function createMenuSounds(settings) {
       last = at;
       const tone = context.createOscillator();
       const gain = context.createGain();
+      const [start, end, strength] = tones[sound] || tones.button;
       tone.type = 'sine';
-      tone.frequency.setValueAtTime(sound === 'test' ? 520 : 390, at);
-      tone.frequency.exponentialRampToValueAtTime(sound === 'test' ? 690 : 280, at + 0.075);
+      tone.frequency.setValueAtTime(start, at);
+      tone.frequency.exponentialRampToValueAtTime(end, at + 0.075);
       gain.gain.setValueAtTime(0.001, at);
-      gain.gain.linearRampToValueAtTime(0.055 * volume + 0.001, at + 0.012);
+      gain.gain.linearRampToValueAtTime(strength * volume + 0.001, at + 0.012);
       gain.gain.exponentialRampToValueAtTime(0.001, at + 0.105);
       tone.connect(gain).connect(context.destination);
       tone.start(at);

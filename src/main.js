@@ -127,6 +127,10 @@ function fitCamera() {
 }
 
 function selectVillager(id) {
+  if (id !== view.selectedVillager) {
+    view.commandCue = null;
+    view.interactionPreview = null;
+  }
   view.selectedVillager = id;
   view.selectedObject = null;
   ui.selectVillager(selectedVillager());
@@ -246,6 +250,7 @@ const menu = createMainMenu(title, {
 
 let pendingFindFocus;
 let pendingFirstFind;
+const pendingAuronMilestones = new Map();
 
 function updateFindPresentation() {
   if (pointer || pinchState || view.placementType) return;
@@ -268,7 +273,7 @@ function updateFindPresentation() {
 function handleGameplayEvent(ev) {
   if (view.mode !== 'playing') return;
   const story = ensureStoryState(world.state);
-  if (ev.type === 'illness' && !story.seenEvents.first_illness) {
+  if (ev.type === 'illness' && ev.tutorialSafe && !story.seenEvents.first_illness) {
     story.seenEvents.first_illness = true;
     triggerStory('first_illness', ev);
   } else if (ev.type === 'death') {
@@ -321,6 +326,19 @@ function handleGameplayEvent(ev) {
   } else if (ev.type === 'colony_lost') {
     triggerStory('colony_lost', ev);
   }
+  const remarks = {
+    pregnancy: ['A Place at the Table', 'happy', 'A little one is on the way. A full pantry makes for a gentler welcome.'],
+    first_steps: ['Small Steps', 'proud', 'Off they go! The whole island can wait. The nursery is a grand enough expedition today.'],
+    adulthood: ['A New Generation', 'proud', 'The child who once fit in two hands can help hold up the whole village now.'],
+    founder_passing: ['Remembering a Founder', 'sad', 'They were here when the shore was quiet. Listen to the village now.'],
+    major_illness: ['Time to Help', 'worried', 'Give the patient time to rest, and send someone healthy to treat them. The other work can wait.'],
+  };
+  const remark = ev.type === 'life_stage' && ev.stage === 'adult' ? 'adulthood'
+    : ev.type === 'death' && ev.grave.founder ? 'founder_passing' : ev.type;
+  if (remarks[remark] && !story.seenEvents[remark]) {
+    const [title, expression, text] = remarks[remark];
+    pendingAuronMilestones.set(remark, { id: remark, mode: 'ambient', pauseWorld: false, beats: [{ title, expression, text }] });
+  }
   ui.refreshQuestTracker();
 }
 
@@ -337,7 +355,9 @@ function saveActive(now = Date.now()) {
 
 function replaceIsland(save) {
   pendingFindFocus = pendingFirstFind = null;
+  pendingAuronMilestones.clear();
   view.selectedVillager = view.selectedObject = view.placementType = view.placement = view.storyBeacon = null;
+  view.commandCue = view.interactionPreview = null;
   view.overlays.clear();
   storyDirector.reset();
   restoreVillage(world, save ?? { state: structuredClone(pristine) });
@@ -499,6 +519,7 @@ document.addEventListener('visibilitychange', () => {
   if (view.mode !== 'playing') return;
   if (document.hidden) {
     cameraController.clearPanKeys();
+    cancelCanvasGesture();
     hiddenAt = Date.now();
     saveActive(hiddenAt);
   } else if (hiddenAt !== null) {
@@ -513,46 +534,57 @@ function canvasPosition(event) {
   return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
 }
 
-function command(position) {
+function command(position, sendToVillager = false) {
   const hit = renderer.pick(position);
-  if (hit?.hit === 'villager') {
+  const villager = selectedVillager();
+  ui.inspect(position, hit);
+  if (hit?.hit === 'villager' && (!sendToVillager || !villager || villager.id === hit.entity.id)) {
     selectVillager(hit.entity.id);
     return;
   }
-  ui.inspect(position, hit);
-  view.selectedObject = hit?.hit === 'object' ? hit.entity.id : null;
-  const villager = selectedVillager();
+  view.selectedObject = !villager && hit?.hit === 'object' ? hit.entity.id : null;
   if (hit?.hit === 'collectible' && hit.entity.id.startsWith('preview_')) {
     ui.notify(assets.registry.get(hit.entity.assetId).name + ' · developer preview');
+    return;
+  }
+  if (hit?.hit === 'building' && hit.entity.type === 'family_house' && hit.entity.state === 'completed') {
+    ui.setMenu('family');
     return;
   }
   if (hit) {
     if (!villager) {
       const puzzle = landmarks[hit.entity.puzzleId];
       if (puzzle) ui.notify(puzzle.hint);
-      else if (hit.hit === 'grave') ui.notify(`${hit.entity.name}'s memorial (Day ${hit.entity.day}). Drop a villager here to pay respects.`);
+      else if (hit.hit === 'grave') ui.showMemorial(hit.entity.id);
       else if (hit.hit === 'collectible') ui.notify('Drop a villager on this find to collect it.');
       return;
     }
-    const error = gameplay.assign(villager, { kind: hit.hit, id: hit.entity.id });
-    if (error) ui.notify(error);
+    const ref = dropRef(hit);
+    const error = gameplay.assign(villager, ref);
+    acknowledgeCommand(villager, error, hit);
     return;
   }
-  const error = villager && gameplay.move(villager, worldToTile(position, size));
-  if (error) ui.notify(error);
+  if (villager) acknowledgeCommand(villager, gameplay.move(villager, worldToTile(position, size)));
 }
 
 let pointer = null;
 const touchPointers = new Map();
 let pinchState = null;
 const dropRef = hit => hit && { kind: hit.hit, id: hit.entity.id };
+let hoverScreen = null;
 
-function refreshDropPreview() {
-  if (!view.drag) return;
-  const { position } = view.drag;
-  const hit = renderer.pick(position, undefined, pointer.villager.id);
-  const { tile, label, icon } = gameplay.inspectDrop(pointer.villager, worldToTile(position, size), dropRef(hit));
-  Object.assign(view.drag, { landing: tile, label, target: hit });
+function acknowledgeCommand(villager, error, target) {
+  const preview = !error && target ? gameplay.inspectTarget(villager, dropRef(target), false) : {};
+  view.commandCue = {
+    villagerId: villager.id, target, issue: error, label: preview.label, icon: preview.icon,
+    destination: error ? null : villager.route.at(-1), until: performance.now() + 1000,
+  };
+  if (error) ui.notify(error);
+  sound(error ? 'command-invalid' : 'command-send');
+  ui.refreshProfile();
+}
+
+function setActionHint({ label, icon }) {
   dropHint.hidden = !label;
   if (!label) return;
   if (dropHint.dataset.icon !== icon) {
@@ -562,36 +594,91 @@ function refreshDropPreview() {
   if (dropLabel.textContent !== label) dropLabel.textContent = label;
 }
 
+function refreshInteractionPreview() {
+  const drag = view.drag;
+  const villager = drag ? pointer.villager : selectedVillager();
+  const position = drag?.position || (hoverScreen && screenToWorld(hoverScreen, renderCamera));
+  if (!villager || !position || view.mode !== 'playing' || storyDirector.isBlocking() || view.placementType
+    || (!drag && (pointer || pinchState))) {
+    view.interactionPreview = null;
+    return;
+  }
+  const hit = renderer.pick(position, undefined, villager.id);
+  const ref = dropRef(hit);
+  const result = drag ? gameplay.inspectDrop(villager, worldToTile(position, size), ref, true)
+    : ref && ref.kind !== 'villager' ? gameplay.inspectTarget(villager, ref) : {};
+  const preview = { target: hit, position, issue: result.issue, label: result.label, icon: result.icon, landing: result.tile };
+  view.interactionPreview = preview;
+  if (drag) Object.assign(drag, preview);
+}
+
 function updateDragPosition() {
   view.drag.position = screenToWorld(pointer.screen, renderCamera);
 }
 
-function positionDropHint() {
-  if (dropHint.hidden || !view.drag.landing) return;
-  const anchor = worldToScreen(tileToWorld(view.drag.landing, size), renderCamera);
+function updateActionHint(now) {
+  const cue = view.commandCue;
+  const preview = view.interactionPreview;
+  const explicit = cue?.villagerId === view.selectedVillager && now < cue.until && !pointer;
+  const hint = view.drag ? preview : explicit && cue.label ? cue : preview;
+  if (view.mode !== 'playing' || storyDirector.isBlocking() || !hint || (!hint.label && !hint.issue)) {
+    dropHint.hidden = true;
+    return;
+  }
+  setActionHint({ label: hint.issue || hint.label, icon: hint.icon || 'icon_question' });
+  dropHint.dataset.issue = String(Boolean(hint.issue));
+  const tile = hint.landing || hint.target?.entity.waterTarget;
+  const target = hint.target;
+  const position = tile ? tileToWorld(tile, size)
+    : target?.width ? { x: target.x + target.width / 2, y: target.y + target.height / 2 }
+      : target?.entity.position || hint.position;
+  if (!position) {
+    dropHint.hidden = true;
+    return;
+  }
+  const anchor = worldToScreen(position, renderCamera);
   const margin = dropHint.offsetWidth / 2 + 6;
   dropHint.style.left = `${Math.round(Math.max(margin, Math.min(canvas.clientWidth - margin, anchor.x)))}px`;
-  dropHint.style.top = `${Math.round(Math.max(30, Math.min(pointer.screen.y - 46 * renderCamera.zoom, anchor.y - 12)))}px`;
+  const top = view.drag ? Math.min(pointer.screen.y - 46 * renderCamera.zoom, anchor.y - 12) : anchor.y - 28;
+  dropHint.style.top = `${Math.round(Math.max(dropHint.offsetHeight + 6, Math.min(canvas.clientHeight - 6, top)))}px`;
 }
 
 function liftVillager() {
   if (!pointer?.villager || view.drag) return;
-  delete pointer.villager.holdStillUntil;
+  if (pointer.villager.lifeStage === 'baby') return;
+  if (!world.state.villagers.includes(pointer.villager)) {
+    cancelCanvasGesture();
+    return;
+  }
+  const sleepy = gameplay.pickUp(pointer.villager);
   world.heldVillager = pointer.villager.id;
-  view.drag = { id: world.heldVillager, startedAt: performance.now() };
+  view.commandCue = null;
+  view.drag = { id: world.heldVillager, startedAt: performance.now(), sleepy };
   updateDragPosition();
-  refreshDropPreview();
-  positionDropHint();
+  refreshInteractionPreview();
+  updateActionHint(performance.now());
+  sound('command-pickup');
   canvas.classList.add('dragging');
 }
 
-function clearPointer() {
+function clearPointer(releasing = false) {
   clearTimeout(pointer?.holdTimer);
+  if (view.drag && !releasing) gameplay.cancelPickup(pointer.villager);
   pointer = null;
   world.heldVillager = null;
   view.drag = null;
+  view.interactionPreview = null;
+  hoverScreen = null;
   dropHint.hidden = true;
   canvas.classList.remove('dragging');
+}
+
+function cancelCanvasGesture() {
+  const id = pointer?.id;
+  clearPointer();
+  touchPointers.clear();
+  pinchState = null;
+  if (id !== undefined && canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
 }
 
 function touchGestureSnapshot() {
@@ -614,6 +701,8 @@ canvas.addEventListener('wheel', event => {
 canvas.addEventListener('pointerdown', event => {
   if (view.mode !== 'playing' || storyDirector.isBlocking()) return;
   cameraController.clearPanKeys();
+  view.interactionPreview = null;
+  dropHint.hidden = true;
   const start = canvasPosition(event);
   if (event.pointerType === 'touch') {
     touchPointers.set(event.pointerId, start);
@@ -625,16 +714,17 @@ canvas.addEventListener('pointerdown', event => {
     }
   }
   if (pointer || pinchState || (event.button !== 0 && event.button !== 2 && event.button !== 1)) return;
-  const villager = !view.placementType && event.button === 0
-    ? renderer.pick(screenToWorld(start, renderCamera), 'villager')?.entity : null;
+  const hit = !view.placementType && event.button === 0 ? renderer.pick(screenToWorld(start, renderCamera)) : null;
+  const villager = hit?.hit === 'villager' ? hit.entity : null;
   pointer = { id: event.pointerId, start, screen: start, x: camera.x, y: camera.y, villager, moved: false, button: event.button };
-  if (villager) pointer.holdTimer = setTimeout(liftVillager, 175);
+  if (villager) pointer.holdTimer = setTimeout(liftVillager, event.pointerType === 'touch' ? 240 : 175);
   canvas.setPointerCapture(event.pointerId);
 });
 
 canvas.addEventListener('pointermove', event => {
   if (view.mode !== 'playing') return;
   const screen = canvasPosition(event);
+  if (event.pointerType === 'mouse') hoverScreen = screen;
   if (event.pointerType === 'touch' && touchPointers.has(event.pointerId)) {
     touchPointers.set(event.pointerId, screen);
     if (pinchState && touchPointers.size >= 2) {
@@ -648,7 +738,7 @@ canvas.addEventListener('pointermove', event => {
     pointer.screen = screen;
     const dx = screen.x - pointer.start.x;
     const dy = screen.y - pointer.start.y;
-    if (Math.hypot(dx, dy) >= 5) pointer.moved = true;
+    if (Math.hypot(dx, dy) >= (event.pointerType === 'touch' ? 9 : 5)) pointer.moved = true;
     if (pointer.moved && !pointer.villager) {
       camera.x = Math.round(pointer.x + dx);
       camera.y = Math.round(pointer.y + dy);
@@ -664,6 +754,11 @@ canvas.addEventListener('pointermove', event => {
   }
 });
 
+canvas.addEventListener('pointerleave', () => {
+  hoverScreen = null;
+  if (!view.drag) view.interactionPreview = null;
+});
+
 canvas.addEventListener('pointerup', event => {
   if (view.mode !== 'playing') return;
   if (event.pointerType === 'touch') {
@@ -673,7 +768,7 @@ canvas.addEventListener('pointerup', event => {
   if (pointer?.id !== event.pointerId) return;
   const { villager, moved, button } = pointer;
   const held = Boolean(view.drag);
-  clearPointer();
+  clearPointer(true);
   if (button !== 0 || (moved && !villager)) return;
   const position = screenToWorld(canvasPosition(event), renderCamera);
   if (view.placementType) {
@@ -687,13 +782,21 @@ canvas.addEventListener('pointerup', event => {
     return;
   }
   if (held) {
+    const { x, y } = canvasPosition(event);
+    if (x < 0 || y < 0 || x >= canvas.clientWidth || y >= canvas.clientHeight) {
+      gameplay.cancelPickup(villager);
+      ui.notify('Release over the island to put this villager down.');
+      sound('command-invalid');
+      return;
+    }
     const hit = renderer.pick(position, undefined, villager.id);
     const error = gameplay.drop(villager, worldToTile(position, size), dropRef(hit));
     selectVillager(villager.id);
     if (error) ui.notify(error);
+    sound(error ? 'command-invalid' : 'command-land');
     return;
   }
-  command(position);
+  command(position, event.shiftKey);
 });
 
 for (const eventName of ['pointercancel', 'lostpointercapture']) canvas.addEventListener(eventName, input => {
@@ -744,6 +847,7 @@ window.addEventListener('keydown', event => {
 
 window.addEventListener('keyup', event => cameraController.setPanKey(event.code, false));
 window.addEventListener('blur', cameraController.clearPanKeys);
+window.addEventListener('blur', cancelCanvasGesture);
 document.addEventListener('focusin', event => {
   if (event.target.closest?.(keyboardControls)) cameraController.clearPanKeys();
 });
@@ -793,17 +897,32 @@ function frame(now) {
       && !pointer && !pinchState && !view.placementType && !view.debug
       && !pendingFirstFind && !world.collectibleReveals.size
       && world.state.villagers.length) {
-      auronCheckIns.update(dt, world.state, storyDirector.play);
+      const next = pendingAuronMilestones.values().next().value;
+      if (next) {
+        if (storyDirector.play(next)) {
+          world.state.story.seenEvents[next.id] = true;
+          pendingAuronMilestones.delete(next.id);
+        }
+      } else auronCheckIns.update(dt, world.state, storyDirector.play);
     }
   }
-  if (view.drag) {
-    updateDragPosition();
-    if (now - lastPreview >= 55) {
-      refreshDropPreview();
-      positionDropHint();
-      lastPreview = now;
-    }
+  if (view.drag && !world.state.villagers.includes(pointer.villager)) cancelCanvasGesture();
+  if (view.drag) updateDragPosition();
+  if (view.commandCue?.destination && !view.commandCue.arrivedAt) {
+    const villager = selectedVillager();
+    const destination = villager?.route.at(-1);
+    if (destination && villager.currentTask?.manual) view.commandCue.destination = destination;
+    else if (villager && !view.drag && villager.tile.x === view.commandCue.destination.x
+      && villager.tile.y === view.commandCue.destination.y) view.commandCue.arrivedAt = now;
+    else if (now >= view.commandCue.until) view.commandCue = null;
+  } else if (view.commandCue && now >= Math.max(view.commandCue.until, (view.commandCue.arrivedAt || 0) + 400)) {
+    view.commandCue = null;
   }
+  if ((view.drag || hoverScreen) && now - lastPreview >= 85) {
+    refreshInteractionPreview();
+    lastPreview = now;
+  }
+  updateActionHint(now);
   renderer.render();
   if (view.mode === 'playing' && now - lastStatus >= 100) {
     ui.refreshStatus();

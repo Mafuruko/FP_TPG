@@ -17,6 +17,8 @@ import { cameraWorldRect, rangeFromView, wildlifeOpacity, wildlifeTuning, wildli
 import { startGameplay } from '../src/gameplay.js';
 import { advanceOffline, readVillage, restoreVillage, saveVillage } from '../src/save.js';
 import { skillProgress, villagerBlink, villagerExpression, villagerPortraitExpression } from '../src/villagers.js';
+import { foodSecurity, illnessSeverity, phaseDuration, survival } from '../src/survival.js';
+import { CLOCK_CONFIG } from '../src/climate.js';
 
 const { uiCss, ...modules } = await readStudioModules();
 const studios = Object.fromEntries(await Promise.all(Object.entries(modules).map(async ([key, code]) => [
@@ -56,6 +58,8 @@ test('dropping lands immediately on reachable ground or at a job, with no walkin
   const blocked = map.bridge.footprint.find(tile => !walkable(world.collision, tile));
   assert.match(game.drop(luna, blocked), /reachable ground/);
   assert.deepEqual(luna.tile, ground);
+  assert.match(game.drop(luna, { x: 0, y: 0 }), /reachable ground/);
+  assert.match(game.drop(luna, { x: -1, y: 0 }), /reachable ground/);
   const east = map.unlockableAreas.find(area => area.id === 'eastern_region').tiles
     .map(([x, y]) => ({ x, y })).find(tile => walkable(world.collision, tile));
   assert.match(game.drop(luna, east), /reachable ground/);
@@ -84,6 +88,7 @@ test('job drop previews use the same reachable tile and assignment rules as rele
   const initial = { ...villager.tile };
   const bush = map.objects.find(object => object.type === 'berry_bush');
   const tree = map.objects.find(object => object.type === 'tree' && describeInteraction(object, assets).type === 'chop');
+  assert.match(game.drop(villager, tree.tile), /reachable ground/);
   const fishing = map.fishingSpots.find(spot => spot.requires.length === 1);
   const camp = map.objects.find(object => object.type === 'campfire_site');
   const preview = object => game.inspectDrop(villager, object.tile || object.waterTarget, { kind: 'object', id: object.id });
@@ -117,6 +122,143 @@ test('job drop previews use the same reachable tile and assignment rules as rele
   assert.match(preview(bush).issue, /empty/);
 });
 
+test('walking and dropping agree on job restrictions and use the same fishing stand and facing', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const [adult] = world.state.villagers;
+  const child = world.state.villagers.find(villager => villager.lifeStage === 'child');
+  const fish = map.fishingSpots.find(spot => spot.requires.length === 1);
+  const tree = map.objects.find(object => object.type === 'tree');
+  for (const [villager, target, tile, reason] of [
+    [adult, fish, fish.waterTarget, /Learn Fishing/],
+    [child, tree, tree.tile, /too young/],
+  ]) {
+    const ref = { kind: 'object', id: target.id };
+    const issue = game.inspectTarget(villager, ref).issue;
+    assert.match(issue, reason);
+    assert.equal(game.assign(villager, ref), issue);
+    assert.equal(game.inspectDrop(villager, tile, ref).issue, issue);
+    assert.equal(game.drop(villager, tile, ref), issue);
+    assert.equal(villager.work, null);
+  }
+  world.state.abilities.fish = true;
+  assert.equal(game.drop(adult, map.villagerSpawns[0]), null);
+  const ref = { kind: 'object', id: fish.id };
+  const start = { ...adult.position };
+  assert.equal(game.assign(adult, ref), null);
+  assert.deepEqual(adult.position, start);
+  assert.equal(adult.work.phase, 'approach');
+  assert.match(adult.activity, /Going to fishing spot/);
+  runUntil(world, () => adult.work?.phase === 'work');
+  const { direction } = adult;
+  assert.equal(direction, { left: 'left', right: 'right', up: 'back', down: 'front' }[fish.facing]);
+  assert.deepEqual(adult.position, tileToWorld(fish.standPosition, map.meta.tileSize));
+  assert.equal(game.drop(adult, fish.waterTarget, ref), null);
+  assert.deepEqual(adult.position, tileToWorld(fish.standPosition, map.meta.tileSize));
+  assert.equal(adult.direction, direction);
+  assert.equal(adult.work.phase, 'work');
+});
+
+test('commands reroute around new obstructions, abandon blocked destinations, and clear stale jobs', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const villager = world.state.villagers[0];
+  world.state.villagers = [villager];
+  const at = { x: 24, y: 40 };
+  const goal = { x: 28, y: 40 };
+  for (let y = 39; y <= 41; y++) for (let x = 24; x <= 28; x++) world.collision[y][x] = 0;
+  assert.equal(game.drop(villager, at), null);
+  assert.equal(game.move(villager, goal), null);
+  world.collision[40][25] = 1;
+  updateWorld(world, 0.1);
+  assert.ok(villager.route.length > 0);
+  assert.ok(villager.route.every(point => walkable(world.collision, point)));
+  runUntil(world, () => !villager.route.length);
+  assert.deepEqual(villager.tile, goal);
+
+  assert.equal(game.move(villager, at), null);
+  world.collision[at.y][at.x] = 1;
+  runUntil(world, () => !villager.route.length);
+  assert.match(villager.activity, /Cannot reach/);
+
+  const bush = map.objects.find(object => object.type === 'berry_bush');
+  const tree = map.objects.find(object => object.type === 'tree');
+  assert.equal(game.assign(villager, { kind: 'object', id: bush.id }), null);
+  assert.equal(game.assign(villager, { kind: 'object', id: tree.id }), null);
+  assert.equal(villager.work.ref.id, tree.id);
+  runUntil(world, () => villager.work?.phase === 'work');
+  assert.equal(villager.work.job, 'chop');
+  assert.equal(villager.skills.gather ?? 0, 0);
+  game.pickUp(villager);
+  assert.equal(villager.work, null);
+  assert.deepEqual(villager.route, []);
+  game.cancelPickup(villager);
+  updateWorld(world, 0.25);
+  assert.equal(villager.skills.chop ?? 0, 0);
+
+  assert.equal(game.assign(villager, { kind: 'object', id: bush.id }), null);
+  world.state.objects[bush.id].amount = 0;
+  updateWorld(world, 0.1);
+  assert.deepEqual(villager.route, []);
+  assert.equal(villager.work, null);
+  assert.match(villager.activity, /empty/);
+
+  game.spawnCollectible();
+  const [collectible] = world.state.activeCollectibles;
+  const ref = { kind: 'collectible', id: collectible.id };
+  assert.equal(game.assign(villager, ref), null);
+  world.state.activeCollectibles.length = 0;
+  updateWorld(world, 0.1);
+  assert.equal(villager.work, null);
+  assert.match(villager.activity, /no longer available/);
+  assert.equal(world.state.collectionProgress[collectible.assetId].discoveryCount, 0);
+});
+
+test('sending a carrier to camp delivers the same haul only once', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const villager = world.state.villagers[0];
+  world.state.villagers = [villager];
+  const bush = map.objects.find(object => object.type === 'berry_bush');
+  const camp = map.objects.find(object => object.type === 'campfire_site');
+  assert.equal(game.drop(villager, bush.tile, { kind: 'object', id: bush.id }), null);
+  runUntil(world, () => villager.work?.phase === 'deliver');
+  const food = world.resources.get('food');
+  const ref = { kind: 'object', id: camp.id };
+  assert.equal(game.inspectTarget(villager, ref).label, 'Deliver Supplies');
+  assert.equal(game.assign(villager, ref), null);
+  assert.equal(game.assign(villager, ref), null);
+  runUntil(world, () => villager.work === null);
+  assert.equal(world.resources.get('food'), food + 2);
+  assert.equal(villager.skills.gather, 1);
+});
+
+test('reassigning a builder keeps site progress and another builder cannot complete it twice', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  world.state.villagers = world.state.villagers.slice(0, 2);
+  const [a, b] = world.state.villagers;
+  world.resources.add('wood', 100);
+  world.resources.add('stone', 100);
+  const zone = map.buildingZones.find(entry => entry.allowedBuildingTypes.includes('research_hut'));
+  assert.ok(zone.tiles.some(([x, y]) => game.place('research_hut', { x, y }) === null));
+  const [building] = world.state.buildings;
+  const target = { kind: 'building', id: building.id };
+  assert.equal(game.drop(a, building.tile, target), null);
+  runUntil(world, () => building.progress > 0);
+  const progress = building.progress;
+  game.pickUp(a);
+  game.cancelPickup(a);
+  assert.equal(building.progress, progress);
+  assert.equal(game.drop(a, building.tile, target), null);
+  assert.equal(game.assign(b, target), null);
+  runUntil(world, () => building.state === 'completed');
+  world.state.villagers.forEach(villager => { villager.retryAt = Infinity; });
+  for (let frame = 0; frame < 40; frame++) updateWorld(world, 0.1);
+  assert.equal(building.progress, 4);
+  assert.equal(world.resources.get('knowledge'), 0);
+});
+
 test('saved job experience grants ranks, faster cycles, bigger hauls and different tool art', () => {
   const world = createWorld(assets);
   const game = startGameplay(world);
@@ -126,11 +268,11 @@ test('saved job experience grants ranks, faster cycles, bigger hauls and differe
   assert.equal(game.drop(villager, bush.tile, ref), null);
   const traineeTime = villager.work.remaining;
   assert.equal(skillProgress(villager, 'gathering').rank.name, 'Trainee');
-  villager.skills = { gather: 2, chop: 2, fish: 1 };
+  villager.skills = { gather: 12, chop: 5, fish: 1 };
   assert.equal(game.drop(villager, bush.tile, ref), null);
   const adeptTime = villager.work.remaining;
   assert.equal(skillProgress(villager, 'gathering').rank.name, 'Adept');
-  villager.skills.mine = 9;
+  villager.skills.mine = 36;
   assert.equal(game.drop(villager, bush.tile, ref), null);
   assert.equal(skillProgress(villager, 'gathering').rank.name, 'Master');
   assert.ok(villager.work.remaining < adeptTime && adeptTime < traineeTime);
@@ -145,6 +287,186 @@ test('saved job experience grants ranks, faster cycles, bigger hauls and differe
       ...options, ...(animation === 'pickup' ? { frame: 1 } : { rank: 2 }),
     }));
   }
+});
+
+test('ranked gatherers deliver more over equal time and need fewer trips for the same food', t => {
+  const results = [0, 18, 54].map(xp => {
+    const world = createWorld(assets);
+    const game = startGameplay(world);
+    const villager = world.state.villagers[0];
+    world.state.villagers = [villager];
+    villager.quirks = [];
+    villager.skills.gather = xp;
+    world.resources.add('food', 100);
+    game.setDiagnostics(true);
+    const bush = map.objects.find(object => object.type === 'berry_bush');
+    assert.equal(game.drop(villager, bush.tile, { kind: 'object', id: bush.id }), null);
+    let tripsForTen;
+    for (let step = 0; step < 1100; step++) {
+      updateWorld(world, 0.1);
+      if (tripsForTen === undefined) {
+        const sample = game.diagnosticsFor(villager.id);
+        if (sample['Delivered · food'] >= 10) tripsForTen = sample['Delivery trips'];
+      }
+    }
+    const sample = game.diagnosticsFor(villager.id);
+    assert.equal(sample['XP · gathering'], sample['Delivery trips']);
+    return { food: sample['Delivered · food'], tripsForTen };
+  });
+  assert.deepEqual(results.map(result => result.tripsForTen), [5, 4, 2]);
+  assert.ok(results[2].food > results[1].food && results[1].food > results[0].food, JSON.stringify(results));
+  t.diagnostic(`Food delivered in 110 simulation seconds, Trainee/Adept/Master: ${results.map(result => result.food).join('/')}`);
+});
+
+test('building, research and healing ranks improve completed outcomes in the live simulation', t => {
+  const report = [0, 18, 54].map(xp => {
+    const world = createWorld(assets);
+    const game = startGameplay(world);
+    const [worker, patient] = world.state.villagers;
+    world.state.villagers = [worker, patient];
+    worker.quirks = [];
+    worker.skills = { build: xp, research: xp, heal: xp };
+    world.state.worldFlags.light_campfire = true;
+    assert.ok(game.setWorkPreference(patient, 'rest'));
+    const funds = { wood: 100, stone: 100, food: 100 };
+    for (const [type, amount] of Object.entries(funds)) world.resources.add(type, amount);
+    const zone = map.buildingZones.find(entry => entry.allowedBuildingTypes.includes('house'));
+    assert.ok(zone.tiles.some(([x, y]) => game.place('house', { x, y }) === null));
+    const [site] = world.state.buildings;
+    assert.equal(game.drop(worker, site.tile, { kind: 'building', id: site.id }), null);
+    runUntil(world, () => site.state === 'completed');
+    const buildingSeconds = world.state.time.seconds;
+    assert.equal(worker.skills.build - xp, 4);
+    worker.needs.energy = 100;
+    const camp = map.objects.find(object => object.type === 'campfire_site');
+    assert.equal(game.drop(worker, camp.tile, { kind: 'object', id: camp.id }), null);
+    runUntil(world, () => worker.skills.research > xp);
+    const knowledge = world.resources.get('knowledge');
+    world.state.abilities.heal = true;
+    world.state.story.seenEvents.first_illness = true;
+    patient.needs.health = 22;
+    patient.illness = { tutorialSafe: false, burden: 80, nextExposureAt: Infinity };
+    assert.equal(game.drop(worker, patient.tile, { kind: 'villager', id: patient.id }), null);
+    runUntil(world, () => worker.skills.heal > xp);
+    return { buildingSeconds, knowledge, health: patient.needs.health, burden: patient.illness?.burden };
+  });
+  assert.ok(report[2].buildingSeconds < report[1].buildingSeconds && report[1].buildingSeconds < report[0].buildingSeconds);
+  assert.deepEqual(report.map(result => result.knowledge), [2, 3, 4]);
+  assert.ok(report[2].health > report[1].health && report[1].health > report[0].health);
+  assert.ok(report[2].burden < report[1].burden && report[1].burden < report[0].burden);
+  t.diagnostic(`House completion in simulation seconds: ${report.map(result => result.buildingSeconds.toFixed(1)).join('/')}`);
+  t.diagnostic(`Patient Health after first treatment: ${report.map(result => result.health).join('/')}`);
+});
+
+test('saved hauls reserve the available supply and award XP once when delivered', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  world.state.villagers = world.state.villagers.slice(0, 2);
+  const [a, b] = world.state.villagers;
+  const bush = map.objects.find(object => object.type === 'berry_bush');
+  const camp = map.objects.find(object => object.type === 'campfire_site');
+  world.state.objects[bush.id].amount = 3;
+  const ref = { kind: 'object', id: bush.id };
+  assert.equal(game.drop(a, bush.tile, ref), null);
+  assert.equal(game.drop(b, bush.tile, ref), null);
+  runUntil(world, () => [a, b].every(villager => villager.work?.phase === 'deliver'));
+  assert.deepEqual([a.work.haul, b.work.haul], [2, 1]);
+  assert.equal((a.skills.gather ?? 0) + (b.skills.gather ?? 0), 0);
+  assert.equal(world.state.objects[bush.id].amount, 3);
+
+  const loaded = createWorld(assets);
+  assert.ok(restoreVillage(loaded, { state: JSON.parse(JSON.stringify(world.state)) }));
+  const restored = startGameplay(loaded);
+  const food = loaded.resources.get('food');
+  const storage = { kind: 'object', id: camp.id };
+  for (const villager of loaded.state.villagers) {
+    assert.equal(restored.drop(villager, camp.tile, storage), null);
+    assert.equal(villager.skills.gather, 1);
+    assert.equal(villager.work, null);
+  }
+  assert.equal(loaded.resources.get('food'), food + 3);
+  assert.equal(loaded.state.objects[bush.id].amount, 0);
+
+  const legacy = JSON.parse(JSON.stringify(world.state));
+  delete legacy.villagers[0].skillVersion;
+  delete legacy.villagers[0].work.haul;
+  legacy.villagers[0].skills = { gather: 5, fish: 2 };
+  assert.ok(restoreVillage(loaded, { state: legacy }));
+  const migrated = startGameplay(loaded);
+  const previousRank = skillProgress(loaded.state.villagers[0], 'gathering');
+  assert.equal(previousRank.rank.name, 'Adept');
+  assert.equal(loaded.state.villagers[0].skills.fish, 2);
+  assert.equal(migrated.drop(loaded.state.villagers[0], camp.tile, storage), null);
+  assert.equal(skillProgress(loaded.state.villagers[0], 'gathering').xp, previousRank.xp);
+});
+
+test('work preferences survive saves, give manual commands precedence, and resume after resting', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const [worker, idle] = world.state.villagers;
+  world.state.villagers = [worker, idle];
+  world.state.worldFlags.light_campfire = true;
+  world.state.resources.food = 5;
+  game.setWorkPreference(worker, 'research');
+  game.setWorkPreference(idle, 'rest');
+  runUntil(world, () => worker.work?.job === 'research');
+  assert.equal(idle.work, null);
+  const source = map.objects.find(object => object.type === 'berry_bush');
+  assert.equal(game.drop(worker, source.tile, { kind: 'object', id: source.id }), null);
+  assert.equal(worker.workPreference, 'research');
+  worker.needs.energy = 33;
+  runUntil(world, () => worker.resting);
+  runUntil(world, () => worker.work?.phase === 'work');
+  assert.equal(worker.work.job, 'gather');
+  assert.ok(worker.needs.energy >= 76);
+  game.stop(worker);
+  for (let i = 0; i < 40; i++) updateWorld(world, 0.1);
+  assert.equal(worker.work, null);
+
+  const loaded = createWorld(assets);
+  assert.ok(restoreVillage(loaded, { state: JSON.parse(JSON.stringify(world.state)) }));
+  startGameplay(loaded);
+  assert.deepEqual(loaded.state.villagers.map(villager => villager.workPreference), ['research', 'rest']);
+  runUntil(loaded, () => loaded.state.villagers[0].work?.job === 'research');
+  assert.equal(loaded.state.villagers[1].work, null);
+});
+
+test('paused, cancelled and idle simulation grants no XP, while speeds agree at equal simulation time', () => {
+  const simulate = speed => {
+    const world = createWorld(assets);
+    const game = startGameplay(world);
+    const villager = world.state.villagers[0];
+    world.state.villagers = [villager];
+    world.state.worldFlags.light_campfire = true;
+    const camp = map.objects.find(object => object.type === 'campfire_site');
+    const ref = { kind: 'object', id: camp.id };
+    game.setWorkPreference(villager, 'rest');
+    assert.equal(game.drop(villager, camp.tile, ref), null);
+    world.state.time.paused = true;
+    updateWorld(world, 10);
+    assert.equal(villager.skills.research, undefined);
+    world.state.time.paused = false;
+    updateWorld(world, 0.5);
+    const remaining = villager.work.remaining;
+    game.holdStill(villager);
+    updateWorld(world, 0.5);
+    assert.equal(villager.work.remaining, remaining);
+    game.releaseHold(villager);
+    updateWorld(world, 0.1);
+    assert.ok(villager.work.remaining < remaining);
+    game.stop(villager);
+    for (let i = 0; i < 40; i++) updateWorld(world, 0.25);
+    assert.equal(villager.skills.research, undefined);
+
+    game.setWorkPreference(villager, 'research');
+    assert.equal(game.drop(villager, camp.tile, ref), null);
+    world.state.time.speed = speed;
+    for (let i = 0; i < 200; i++) updateWorld(world, 0.1 / speed);
+    return { xp: villager.skills.research, knowledge: world.resources.get('knowledge') };
+  };
+  const normal = simulate(1);
+  assert.ok(normal.xp > 0 && normal.xp < 18);
+  assert.deepEqual(simulate(3), normal);
 });
 
 test('snake-shy villagers run away with a brief alert and fast walkers cross ground sooner', () => {
@@ -263,7 +585,9 @@ test('idle villagers face each other and take turns talking until a player redir
   assert.equal(game.drop(b, adjacent), null);
   b.retryAt = 60;
   a.leisureAt = 0;
+  a.needs.energy = b.needs.energy = 70;
   runUntil(world, () => a.conversation?.partnerId === b.id, 12);
+  const energyAtStart = [a.needs.energy, b.needs.energy];
   assert.equal(b.conversation.partnerId, a.id);
   assert.equal(a.activity, `Talking with ${b.name}`);
   assert.equal(b.activity, `Talking with ${a.name}`);
@@ -271,6 +595,7 @@ test('idle villagers face each other and take turns talking until a player redir
   assert.deepEqual([a.animation, b.animation], ['talk', 'idle']);
   runUntil(world, () => b.animation === 'talk', 1);
   assert.equal(a.animation, 'idle');
+  assert.ok(a.needs.energy > energyAtStart[0] && b.needs.energy > energyAtStart[1]);
   assert.equal(game.move(a, a.tile), null);
   assert.equal(a.conversation, null);
   assert.equal(b.conversation, null);
@@ -383,7 +708,15 @@ test('building, families, healing, collectible discovery, and local saves work t
   assert.equal(game.assign(luna, { kind: 'building', id: site.id }), null);
   runUntil(world, () => site.state === 'completed');
   assert.equal(world.state.world.populationCapacity, 7);
-  assert.equal(game.assign(luna, { kind: 'villager', id: kai.id }), null);
+  const partner = { kind: 'villager', id: kai.id };
+  luna.relationships.bonds = { [kai.id]: { points: 3, after: 0 } };
+  assert.equal(game.drop(luna, kai.tile, partner), null);
+  runUntil(world, () => luna.relationships.partner === kai.id);
+  world.resources.add('food', 180);
+  assert.equal(game.drop(luna, kai.tile, partner), null);
+  runUntil(world, () => luna.pregnancy);
+  assert.equal(world.state.villagers.length, 5);
+  world.state.time.seconds = luna.pregnancy.dueAt - 0.1;
   runUntil(world, () => world.state.villagers.length === 6);
   assert.equal(world.state.villagers.at(-1).lifeStage, 'baby');
   kai.needs.health = 50;
@@ -406,6 +739,272 @@ test('building, families, healing, collectible discovery, and local saves work t
   assert.equal(advanceOffline(loaded, 1000, 400000), 90);
   loaded.state.time.paused = true;
   assert.equal(advanceOffline(loaded, 1000, 400000), 0);
+});
+
+test('food forecast matches real early consumption and a dedicated gatherer prevents the founder shortage', t => {
+  function run(assignFood) {
+    const world = createWorld(assets);
+    const game = startGameplay(world);
+    const [a, b] = world.state.villagers;
+    world.state.villagers = [a, b];
+    const expected = foodSecurity(world.state);
+    assert.equal(expected.daily, 32.64);
+    assert.equal(expected.reserve, 28 / expected.daily);
+    const camp = map.objects.find(object => object.type === 'campfire_site');
+    const bush = map.objects.find(object => object.type === 'berry_bush' && object.interactionPoints.length);
+    const initialBerries = world.state.objects[bush.id].amount;
+    assert.equal(initialBerries, survival.berryCapacity);
+    world.state.worldFlags.light_campfire = true;
+    for (const worker of [a, b]) {
+      game.setWorkPreference(worker, 'research');
+      assert.equal(game.drop(worker, camp.interactionPoints[0], { kind: 'object', id: camp.id }), null);
+    }
+    if (assignFood) {
+      game.setWorkPreference(a, 'gathering');
+      assert.equal(game.drop(a, bush.interactionPoints[0], { kind: 'object', id: bush.id }), null);
+    }
+    for (let i = 0; i < CLOCK_CONFIG.dayLengthSeconds * 2; i++) updateWorld(world, 0.5);
+    return { food: world.resources.get('food'), hunger: b.needs.hunger, health: b.needs.health, xp: a.skills.gather ?? 0 };
+  }
+  const managed = run(true);
+  const neglected = run(false);
+  t.diagnostic(`After one day, dedicated worker vs two researchers: ${JSON.stringify([managed, neglected])}`);
+  assert.ok(managed.food > 0 && managed.hunger >= 55 && managed.health === 100 && managed.xp > 0);
+  assert.equal(neglected.food, 0);
+  assert.ok(neglected.hunger < managed.hunger);
+});
+
+test('fishing adds a reliable bonus and crops grow before paying a larger harvest', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const worker = world.state.villagers[0];
+  world.state.villagers = [worker];
+  world.state.abilities.fish = world.state.abilities.farm = true;
+  game.setWorkPreference(worker, 'rest');
+  const fish = map.fishingSpots.find(spot => !spot.requires?.includes('bridge_repaired') && !spot.requires?.includes('fishing_level_2'));
+  const fishRef = { kind: 'object', id: fish.id };
+  assert.equal(game.drop(worker, fish.standPosition, fishRef), null);
+  runUntil(world, () => worker.work?.phase === 'deliver');
+  assert.equal(worker.work.haul, 2 + survival.fishingBonus);
+  runUntil(world, () => !worker.work);
+  assert.equal(worker.skills.fish, 1);
+  const crop = { id: 'test_crop', tile: { ...worker.tile }, cropType: map.farmingZones[0].cropTypes[0], stage: 0 };
+  world.state.crops = [crop];
+  const cropRef = { kind: 'crop', id: crop.id };
+  assert.equal(game.drop(worker, crop.tile, cropRef), null);
+  runUntil(world, () => crop.stage === 1);
+  assert.match(game.assign(worker, cropRef), /growing/);
+  for (let stage = 2; stage <= 3; stage++) {
+    runUntil(world, () => world.state.time.seconds >= crop.growthAt);
+    assert.equal(game.drop(worker, crop.tile, cropRef), null);
+    runUntil(world, () => crop.stage === stage);
+  }
+  assert.equal(game.drop(worker, crop.tile, cropRef), null);
+  runUntil(world, () => worker.work?.phase === 'deliver');
+  assert.equal(worker.work.haul, 2 + survival.cropBonus);
+  runUntil(world, () => !worker.work);
+  assert.equal(crop.stage, 0);
+  assert.equal(worker.skills.farm, 1);
+});
+
+test('treatment requires a completed cycle, interruption is safe, and a Healing Hut measurably relieves critical illness', () => {
+  function outcome(withHut) {
+    const world = createWorld(assets);
+    const game = startGameplay(world);
+    const [healer, patient] = world.state.villagers;
+    world.state.villagers = [healer, patient];
+    world.state.abilities.heal = world.state.story.firstCureDone = true;
+    game.setWorkPreference(healer, 'rest');
+    game.setWorkPreference(patient, 'rest');
+    if (withHut) world.state.buildings.push({ id: 'test_hut', type: 'healing_hut', state: 'completed' });
+    patient.needs.health = 60;
+    patient.illness = { burden: 80, nextExposureAt: Infinity };
+    assert.equal(illnessSeverity(patient), 'critical');
+    const ref = { kind: 'villager', id: patient.id };
+    for (let i = 0; i < 8; i++) updateWorld(world, 0.5);
+    assert.ok(patient.illness.burden > 80);
+    assert.equal(game.drop(healer, patient.tile, ref), null);
+    assert.equal(healer.work.duration, survival.treatmentSeconds);
+    updateWorld(world, 2);
+    game.stop(healer);
+    for (let i = 0; i < 16; i++) updateWorld(world, 0.5);
+    assert.equal(healer.skills.heal, undefined);
+    assert.equal(game.drop(healer, patient.tile, ref), null);
+    world.state.time.paused = true;
+    updateWorld(world, 20);
+    assert.equal(healer.work.remaining, survival.treatmentSeconds);
+    world.state.time.paused = false;
+    runUntil(world, () => healer.skills.heal > 0, 10);
+    assert.ok(patient.illness);
+    return { severity: illnessSeverity(patient), health: patient.needs.health, burden: patient.illness.burden };
+  }
+  const baseline = outcome(false);
+  const improved = outcome(true);
+  assert.equal(baseline.severity, 'serious');
+  assert.equal(improved.severity, 'mild');
+  assert.ok(improved.health > baseline.health && improved.burden < baseline.burden);
+});
+
+test('family commands build familiarity and reserve a pregnancy that survives a save and reaches a new generation', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const [mother, father] = world.state.villagers;
+  world.state.villagers = [mother, father];
+  game.setWorkPreference(mother, 'rest');
+  game.setWorkPreference(father, 'rest');
+  world.resources.add('food', 1400);
+  world.resources.add('wood', 80);
+  world.resources.add('stone', 60);
+  const zone = map.buildingZones.find(entry => entry.allowedBuildingTypes.includes('family_house'));
+  assert.ok(zone.tiles.some(([x, y]) => game.place('family_house', { x, y }) === null));
+  const [home] = world.state.buildings;
+  assert.equal(game.drop(mother, home.tile, { kind: 'building', id: home.id }), null);
+  runUntil(world, () => home.state === 'completed');
+  mother.relationships.bonds = {};
+  father.relationships.bonds = {};
+  const ref = { kind: 'villager', id: father.id };
+  const together = () => {
+    assert.equal(game.drop(mother, father.tile, ref), null);
+    runUntil(world, () => !mother.work);
+  };
+  together();
+  assert.equal(mother.relationships.bonds[father.id].points, 1);
+  together();
+  assert.equal(mother.relationships.bonds[father.id].points, 1);
+  for (const expected of [2, 3]) {
+    mother.relationships.bonds[father.id].after = father.relationships.bonds[mother.id].after = 0;
+    together();
+    assert.equal(mother.relationships.bonds[father.id].points, expected);
+  }
+  assert.equal(mother.relationships.partner, undefined);
+  together();
+  assert.equal(mother.relationships.partner, father.id);
+  assert.equal(mother.pregnancy, undefined);
+  const food = world.resources.get('food');
+  world.resources.remove('food', food);
+  assert.match(game.assign(mother, ref), /Store \d+ Food/);
+  world.resources.add('food', food);
+  together();
+  assert.equal(world.state.villagers.length, 2);
+  assert.ok(mother.pregnancy.dueAt > world.state.time.seconds + survival.pregnancySeconds - 1);
+  assert.match(game.assign(mother, ref), /expecting/);
+  const loaded = createWorld(assets);
+  assert.ok(restoreVillage(loaded, { state: JSON.parse(JSON.stringify(world.state)) }));
+  const restored = startGameplay(loaded);
+  const [a, b] = loaded.state.villagers;
+  const birthEvents = [];
+  restored.subscribeEvents(event => { if (event.type === 'birth') birthEvents.push(event); });
+  loaded.state.time.paused = true;
+  updateWorld(loaded, survival.pregnancySeconds);
+  assert.equal(loaded.state.villagers.length, 2);
+  assert.equal(a.pregnancy.dueAt, mother.pregnancy.dueAt);
+  loaded.state.time.paused = false;
+  loaded.state.time.speed = 3;
+  const advanceTo = target => {
+    while (loaded.state.time.seconds < target) {
+      const increment = Math.min(6, target - loaded.state.time.seconds);
+      if (increment < 0.000001) break;
+      updateWorld(loaded, increment / 3);
+    }
+  };
+  advanceTo(a.pregnancy.dueAt + 0.01);
+  assert.equal(birthEvents.length, 1);
+  const baby = loaded.state.villagers.at(-1);
+  assert.deepEqual(baby.relationships.parents, [a.id, b.id]);
+  assert.equal(baby.development, 'carried');
+  assert.equal(a.carryingBaby, baby.id);
+  assert.deepEqual(baby.position, a.position);
+  assert.match(restored.drop(baby, a.tile), /nursery/);
+  const study = map.objects.find(object => object.type === 'campfire_site');
+  const stone = map.objects.find(object => object.type === 'harvestable_rock');
+  assert.match(restored.assign(a, { kind: 'object', id: stone.id }), /caregiver/);
+  loaded.state.worldFlags.light_campfire = true;
+  assert.equal(restored.assign(a, { kind: 'object', id: study.id }), null);
+  updateWorld(loaded, 0.1);
+  assert.deepEqual(baby.position, a.position);
+  advanceTo(baby.stageSince + survival.carriedSeconds + 0.01);
+  assert.equal(baby.development, 'crawling');
+  assert.equal(a.carryingBaby, undefined);
+  for (let i = 0; i < 80; i++) {
+    updateWorld(loaded, 0.1);
+    assert.ok(walkable(loaded.collision, baby.tile));
+    assert.ok(Math.abs(baby.tile.x - baby.nursery.x) + Math.abs(baby.tile.y - baby.nursery.y) <= survival.nurseryRadius);
+  }
+  advanceTo(baby.stageSince + survival.babySeconds + 0.01);
+  assert.equal(baby.lifeStage, 'child');
+  advanceTo(baby.stageSince + survival.childSeconds + 0.01);
+  assert.equal(baby.lifeStage, 'adult');
+  assert.equal(a.lifeStage, 'adult');
+  assert.equal(birthEvents.length, 1);
+  assert.equal(restored.welcomeSettler(), null);
+  assert.match(restored.welcomeSettler(), /settling/);
+  const settler = loaded.state.villagers.at(-1);
+  assert.notEqual(settler.sex, baby.sex);
+  const parent = [a, b].find(person => person.sex !== baby.sex);
+  assert.match(restored.familyOptions(baby, parent).issue, /relatives/);
+});
+
+test('natural aging preserves elder skills and writes one historical memorial across a save', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const elder = world.state.villagers[0];
+  game.setWorkPreference(elder, 'rest');
+  elder.skills.research = 60;
+  elder.stageSince = world.state.time.seconds - phaseDuration(elder);
+  updateWorld(world, 0.1);
+  assert.equal(elder.lifeStage, 'elder');
+  assert.equal(skillProgress(elder, 'research').rank.name, 'Master');
+  elder.stageSince = world.state.time.seconds - phaseDuration(elder) + 0.4;
+  updateWorld(world, 0.1);
+  assert.equal(world.state.graves.length, 0);
+  updateWorld(world, 0.4);
+  assert.equal(world.state.graves[0].cause, 'old_age');
+  assert.equal(world.state.graves[0].bestSkill.rank, 'Master');
+  assert.equal(game.killVillager(elder, 'old_age'), null);
+  const loaded = createWorld(assets);
+  assert.ok(restoreVillage(loaded, { state: JSON.parse(JSON.stringify(world.state)) }));
+  startGameplay(loaded);
+  assert.deepEqual(loaded.state.graves, world.state.graves);
+});
+
+test('prolonged close contact can spread illness once while the village retains an eligible healer', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const [source, contact, backup] = world.state.villagers;
+  world.state.villagers = [source, contact, backup];
+  world.state.abilities.heal = world.state.story.firstCureDone = true;
+  world.resources.add('food', 400);
+  for (const member of world.state.villagers) {
+    game.setWorkPreference(member, 'rest');
+    assert.equal(game.drop(member, source.tile), null);
+    game.holdStill(member, 160);
+  }
+  assert.ok(game.inflictIllness(source, 'fever', true));
+  for (let i = 0; i < 36; i++) updateWorld(world, 1);
+  assert.equal(contact.illness, undefined);
+  runUntil(world, () => contact.illness?.cause === 'contagion', 60);
+  assert.equal(source.illness.spread, true);
+  for (let i = 0; i < 40; i++) updateWorld(world, 1);
+  assert.equal(backup.illness, undefined);
+});
+
+test('a saved carried infant transfers safely after a caregiver death', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const [a, b] = world.state.villagers;
+  world.state.villagers = [a, b];
+  const newborn = game.triggerBirth(a, b);
+  assert.equal(a.carryingBaby, newborn.id);
+  const loaded = createWorld(assets);
+  assert.ok(restoreVillage(loaded, { state: JSON.parse(JSON.stringify(world.state)) }));
+  const restored = startGameplay(loaded);
+  const [caregiver, survivor, baby] = loaded.state.villagers;
+  assert.equal(baby.caregiverId, caregiver.id);
+  restored.killVillager(caregiver, 'old_age');
+  assert.equal(baby.caregiverId, survivor.id);
+  assert.equal(survivor.carryingBaby, baby.id);
+  assert.deepEqual(baby.relationships.parents, [a.id, b.id]);
+  assert.equal(loaded.state.graves[0].family.childNames[0], baby.name);
 });
 
 test('collecting stages the grab and reveal, including repeat finds', () => {

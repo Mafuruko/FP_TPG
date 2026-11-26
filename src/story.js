@@ -5,36 +5,8 @@ import { landmarks, researchProjects } from './progression.js';
 import { skillProgress, villagerSkills } from './villagers.js';
 
 export const STORY_CONFIG = {
-  // Staged survival & danger pacing
-  needsIntervalSec: 12,
-  starvationHealthLoss: 9,
-  tutorialStarvationFloor: 25,
-  lowFoodWarningThreshold: 5,
-  lowFoodWarningCooldownSec: 70,
-  // Guided Stage 1 tutorial illness (gentle, non-fatal, non-contagious)
-  tutorialIllnessStartHealth: 64,
-  tutorialIllnessFloor: 25,
-  tutorialIllnessDrainPerSec: 0.16,
-  // Stage 2 full survival illness pacing (real risk without instant wipe)
-  illnessIntervalSec: 95,
-  rainIllnessIntervalSec: 55,
-  illnessStartHealth: 52,
-  illnessBaseDrainPerSec: 0.28,
-  illnessLightRainBonus: 0.14,
-  illnessHeavyRainBonus: 0.32,
-  illnessHungerBonus: 0.30,
-  illnessElderBonus: 0.08,
-  criticalHealthThreshold: 26,
-  contagionDelaySec: 55,
-  contagionCheckSec: 22,
-  contagionRadiusTiles: 3.5,
-  // Generational aging pacing
-  birthdayIntervalSec: 55,
-  elderDeathAge: 90,
   // Memorial tending comfort
   mournWorkSec: 2.4,
-  mournEnergyBoost: 16,
-  mournHealthBoost: 10,
   // Villager hold-still & special challenge rewards
   holdStillDurationSec: 20,
   championSpeedMultiplier: 10,
@@ -314,11 +286,11 @@ export const STORY_CHAPTERS = [
     guideId: 'families',
     landmarkId: null,
     summary: 'Build a Family House (18 Wood, 8 Stone) and welcome a baby.',
-    howTo: 'Build a Family House, then drop two adults together (12 Food).',
+    howTo: 'Help two adults get acquainted, then use their family command to become partners and plan a baby.',
     isComplete: ({ state }) => hasCompletedBuilding(state, 'family_house') && ((state.story?.birthCount ?? 0) > 0 || state.villagers.some(v => v.lifeStage === 'baby')),
     steps: ({ state }) => [
       { label: 'Family House', done: hasCompletedBuilding(state, 'family_house'), progress: hasCompletedBuilding(state, 'family_house') ? 'Built' : '18W · 8S' },
-      { label: 'Baby', done: (state.story?.birthCount ?? 0) > 0 || state.villagers.some(v => v.lifeStage === 'baby'), progress: (state.story?.birthCount ?? 0) > 0 ? 'Done' : 'Drop 2 Adults' },
+      { label: 'Baby', done: (state.story?.birthCount ?? 0) > 0 || state.villagers.some(v => v.lifeStage === 'baby'), progress: (state.story?.birthCount ?? 0) > 0 ? 'Done' : 'Plan a Family' },
     ],
     resolveTarget: world => {
       const site = world.state.buildings.find(b => b.type === 'family_house');
@@ -731,7 +703,7 @@ export const FEATURE_GUIDES = [
     summary: 'Keep Food stocked—running out after the tutorial causes starvation.',
     steps: [
       'Gather berries, coconuts, and mushrooms for Food; chop trees for Wood; mine rocks for Stone.',
-      'Depleted bushes and trees regrow after 35 seconds.',
+      'Berry bushes replenish a small batch every 105 simulation seconds. Trees still regrow after 35 seconds.',
       'Build Food Storage (12 Wood, 4 Stone) to shorten supply trips.',
     ],
     actionHint: 'Keep at least 15–20 Food stored once full survival hazards begin.',
@@ -747,8 +719,8 @@ export const FEATURE_GUIDES = [
     summary: 'Tutorial stays safe until you clear the spring and earn 10 Knowledge.',
     steps: [
       'Unlock Healing in Research (10 Knowledge) as soon as you can.',
-      'When a red cross pulses over a sick villager, drag a healthy adult onto them to cure them.',
-      'Build a Healing Hut (12 Wood, 6 Stone) to boost each heal from +50 to +75 Health.',
+      'When a red cross pulses over a sick villager, send a healthy adult to begin timed treatment.',
+      'Build a Healing Hut (12 Wood, 6 Stone) so each treatment relieves more illness.',
     ],
     actionHint: 'After your first guided cure, rainstorms and full lethal sickness activate.',
     resolveTarget: world => {
@@ -767,7 +739,7 @@ export const FEATURE_GUIDES = [
       'Click a green footprint in the clearing to lay the foundation.',
       'Drop one or more adults onto the site to complete all 4 stages.',
     ],
-    actionHint: 'House (+3 pop), Family House (+2 pop & babies), Healing Hut (+75 heal), Research Hut (+3 Knowledge).',
+    actionHint: 'House (+3 pop), Family House (+2 pop & babies), Healing Hut (stronger treatments), Research Hut (+3 Knowledge).',
     resolveTarget: world => ({ position: tileToWorld(world.map.villagerSpawns[2], world.map.meta.tileSize), zoom: 2.25, label: 'Village Clearing' }),
   },
   {
@@ -787,11 +759,11 @@ export const FEATURE_GUIDES = [
     id: 'families',
     title: 'Families, Babies & Aging',
     icon: 'love',
-    summary: 'Elders pass at age 90, so raise children to sustain your colony.',
+    summary: 'Plan for a new generation while your adult villagers can support it.',
     steps: [
-      'Build a Family House (18 Wood, 8 Stone) and keep 12 Food plus 1 open bed.',
-      'Drag one adult directly onto another unpaired adult to welcome a baby.',
-      'Babies grow into children at age 2 and full adults at age 18.',
+      'Build a Family House and save enough food for 1.25 days of meals for the growing village.',
+      'Help two eligible adults grow close, then use their commands to become partners and plan a baby.',
+      'Pregnancy takes 2.25 island days. A newborn is carried, then learns to crawl before becoming a child.',
     ],
     actionHint: 'Children can gather berries, fish, and collect special island finds.',
     resolveTarget: world => {
@@ -1087,19 +1059,17 @@ export function buildEventSequence(eventId, payload, world) {
     case 'first_birth': {
       const baby = payload?.baby;
       const babyName = baby?.name || 'a newborn';
-      const pos = baby?.position ? { ...baby.position } : villagePos;
       return {
         id: 'first_birth',
         tone: 'milestone',
-        mode: 'guide',
+        mode: 'ambient',
+        pauseWorld: false,
         beats: [
           {
             title: `Welcome, Baby ${babyName}!`,
             icon: 'love',
-            text: 'A parent carries the newborn for 30s. Keep Food stocked as they grow!',
-            focus: pos,
-            zoom: STORY_CONFIG.villagerSpotlightZoom,
-            beaconLabel: `Baby ${babyName}`,
+            text: 'Look at those little hands. Keep the stores stocked while the family finds its feet.',
+            expression: 'happy',
             action: baby ? { label: `View ${babyName}`, type: 'select-villager', arg: baby.id } : null,
           },
         ],
@@ -1203,7 +1173,7 @@ export function buildEventSequence(eventId, payload, world) {
           {
             title: 'Colony Lost',
             icon: 'danger',
-            text: 'Every castaway perished. Wipe and start fresh with Healing and Food ready.',
+            text: `The island has fallen quiet after Day ${world.state.time.day}. ${world.state.story.birthCount} births and ${world.state.graves.length} memorials mark the life of this village.`,
             focus: world.state.graves?.[world.state.graves.length - 1]?.position || campPos,
             zoom: 2.0,
           },

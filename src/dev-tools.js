@@ -1,13 +1,14 @@
 import { tileToWorld, walkable } from './geometry.js';
 import { landmarks, researchProjects } from './progression.js';
-import { initializeVillagerQuirks, villagerSkills } from './villagers.js';
+import { initializeVillagerProgress, initializeVillagerQuirks, SKILL_CONFIG, villagerSkills } from './villagers.js';
 import { ensureStoryState, STORY_CONFIG } from './story.js';
+import { initializeSurvival, phaseDuration, survival } from './survival.js';
 
 export const DEV_CONFIG = {
   resourceBurst: 25,
   allResourceBurst: 50,
   skillXpStep: 3,
-  skillMaxXp: 25,
+  skillMaxXp: SKILL_CONFIG.thresholds.at(-1),
   timePresets: {
     dawn: 360,     // 06:00
     day: 720,      // 12:00
@@ -141,7 +142,7 @@ function completeLandmark(world, puzzleId) {
 export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CONFIG) {
   const { state, resources, map, assets } = world;
   const clock = state.simulation ?? (state.simulation = {
-    nextNeeds: 12, nextCollectible: 8, nextBirthday: 180, nextIllness: 110, nextVillager: state.villagers.length + 1,
+    nextNeeds: survival.mealInterval, nextCollectible: 8, nextIllness: survival.illnessCadence, nextVillager: state.villagers.length + 1,
   });
 
   switch (actionId) {
@@ -221,8 +222,8 @@ export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CON
       villager.illness = {
         cause: 'fever',
         startedAt: state.time.seconds,
-        nextContagionAt: state.time.seconds + STORY_CONFIG.contagionDelaySec,
-        criticalWarned: false,
+        burden: 52,
+        nextExposureAt: state.time.seconds + survival.contagionInterval,
       };
       return { ok: true, message: `Dev: ${villager.name} is now unwell (48% Health, active fever).` };
     }
@@ -253,14 +254,11 @@ export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CON
     }
     case 'vil-age-up': {
       for (const villager of state.villagers) {
-        villager.age += 1;
-        const stage = villager.age < 2 ? 'baby' : villager.age < 18 ? 'child' : villager.age < 65 ? 'adult' : 'elder';
-        if (stage !== villager.lifeStage) {
-          world.gameplay?.stop(villager);
-          villager.lifeStage = stage;
-        }
+        const end = { baby: 2, child: 18, adult: 65, elder: 92 }[villager.lifeStage];
+        villager.stageSince = (villager.stageSince ?? state.time.seconds)
+          - phaseDuration(villager) / Math.max(1, end - (villager.stageAge ?? villager.age));
       }
-      return { ok: true, message: 'Dev: Aged all villagers +1 year.' };
+      return { ok: true, message: 'Dev: Advanced each villager by one age step. Resume time to apply.' };
     }
     case 'vil-spawn-adult':
     case 'vil-spawn-baby': {
@@ -289,7 +287,9 @@ export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CON
         relationships: {},
       };
       initializeVillagerQuirks(villager);
+      initializeVillagerProgress(villager);
       state.villagers.push(villager);
+      initializeSurvival(state);
       if (state.villagers.length > state.world.populationCapacity) {
         state.world.populationCapacity = state.villagers.length;
       }
@@ -326,7 +326,10 @@ export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CON
       if (!state.crops?.length) {
         completeLandmark(world, 'unblock_spring');
       }
-      for (const crop of state.crops || []) crop.stage = 3;
+      for (const crop of state.crops || []) {
+        crop.stage = 3;
+        delete crop.growthAt;
+      }
       return { ok: true, message: `Dev: Grew ${state.crops.length} crops to harvest stage 3.` };
     }
     case 'prog-spawn-collectible':
@@ -352,10 +355,11 @@ export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CON
       delete story.seenEvents.first_illness;
       const victim = targetVillager(world, view);
       if (!victim) return { ok: false, message: 'Dev: No villager available.' };
-      if (world.gameplay?.inflictIllness) world.gameplay.inflictIllness(victim, 'fever', true);
+      delete victim.illness;
+      if (world.gameplay?.inflictIllness) world.gameplay.inflictIllness(victim, 'fever', true, { tutorialSafe: true });
       else {
-        victim.needs.health = STORY_CONFIG.illnessStartHealth;
-        victim.illness = { cause: 'fever', startedAt: state.time.seconds, nextContagionAt: state.time.seconds + STORY_CONFIG.contagionDelaySec };
+        victim.needs.health = Math.min(victim.needs.health, survival.tutorialIllnessHealth);
+        victim.illness = { cause: 'fever', tutorialSafe: true, burden: 32, startedAt: state.time.seconds };
       }
       return { ok: true, message: `Dev: Triggered First Illness crisis on ${victim.name}.` };
     }
@@ -372,7 +376,7 @@ export function runDevAction(actionId, world, view, hooks = {}, config = DEV_CON
       delete story.seenEvents.first_old_age_death;
       const elder = state.villagers.find(v => v.lifeStage === 'elder') || targetVillager(world, view);
       if (!elder) return { ok: false, message: 'Dev: No villager available.' };
-      elder.age = Math.max(elder.age, STORY_CONFIG.elderDeathAge);
+      elder.age = Math.max(elder.age, 90);
       elder.lifeStage = 'elder';
       if (world.gameplay?.killVillager) world.gameplay.killVillager(elder, 'old_age');
       return { ok: true, message: `Dev: Triggered Old Age passing event (${elder.name}).` };

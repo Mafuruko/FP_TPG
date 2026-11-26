@@ -18,6 +18,7 @@ export function createStoryDirector(root, { world, view, icon, panTo, onAction, 
   let lastPortrait;
   let previousFocus;
   let chosenResponse;
+  let confirmingReset = false;
   const portraits = new Map();
   const queue = [];
 
@@ -117,22 +118,23 @@ export function createStoryDirector(root, { world, view, icon, panTo, onAction, 
     if (isAmbient()) {
       controlsHtml = '<button type="button" class="gu-btn s story-dismiss" data-story="skip" aria-label="Close Auron’s remark">×</button>';
     } else if (active.colonyLost) {
-      controlsHtml = `<button type="button" class="gu-btn g story-btn" data-story="wipe-fresh">Wipe &amp; Start Fresh</button>
-        <button type="button" class="gu-btn s story-btn" data-story="open-title">Islands</button>`;
+      controlsHtml = confirmingReset
+        ? '<span class="story-reset-warning">This deletes all islands and settings.</span><button type="button" class="gu-btn s story-btn" data-story="cancel-reset">Cancel</button><button type="button" class="gu-btn d story-btn" data-story="wipe-fresh">Delete all data</button>'
+        : '<button type="button" class="gu-btn s story-btn" data-story="confirm-reset">Reset all data…</button><button type="button" class="gu-btn g story-btn" data-story="open-title">Manage islands</button>';
     } else if (beat.choices) {
       controlsHtml = `<div class="story-choices" aria-label="Choose a response">${beat.choices.map((choice, index) =>
         `<button type="button" class="gu-btn s story-btn" data-story-choice="${index}">${escape(choice.label)}</button>`).join('')}</div>
         <button type="button" class="gu-btn s story-btn" data-story="skip">Close</button>`;
     } else if (waiting) {
       controlsHtml = `<span class="story-wait-pill">Do this on the map</span>
-        <button type="button" class="gu-btn g story-btn" data-story="next"${doneTyping ? ' hidden' : ''}>Reveal</button>
+        <button type="button" class="gu-btn g story-btn" data-story="next"${doneTyping ? ' hidden' : ''}>Read all</button>
         ${refocusBtn}
         ${actionBtn}
         <button type="button" class="gu-btn s story-btn" data-story="skip">Skip</button>`;
     } else {
       controlsHtml = `${actionBtn}
         ${refocusBtn}
-        <button type="button" class="gu-btn g story-btn" data-story="next">${!doneTyping ? 'Reveal' : isLast ? 'Got It' : 'Next'}</button>
+        <button type="button" class="gu-btn g story-btn" data-story="next">${!doneTyping ? 'Read all' : isLast ? 'Done' : 'Next'}</button>
         <button type="button" class="gu-btn s story-btn" data-story="skip">${total > 1 ? 'Skip' : 'Close'}</button>`;
     }
 
@@ -175,13 +177,14 @@ export function createStoryDirector(root, { world, view, icon, panTo, onAction, 
       const nextBtn = root.querySelector('[data-story="next"]');
       if (nextBtn) {
         const isLast = beatIndex >= active.beats.length - 1;
-        nextBtn.textContent = isLast ? 'Got It' : 'Next';
+        nextBtn.textContent = isLast ? 'Done' : 'Next';
         if (typeof beat.waitFor === 'function') nextBtn.hidden = true;
       }
     }
   }
 
   function startSequence(sequence) {
+    confirmingReset = false;
     active = sequence;
     chosenResponse = undefined;
     beatIndex = 0;
@@ -346,7 +349,11 @@ export function createStoryDirector(root, { world, view, icon, panTo, onAction, 
       if (cmd === 'next') advance();
       else if (cmd === 'skip') close();
       else if (cmd === 'refocus') applyBeatFocus(currentBeat());
-      else if (cmd === 'wipe-fresh') {
+      else if (cmd === 'confirm-reset' || cmd === 'cancel-reset') {
+        confirmingReset = cmd === 'confirm-reset';
+        render();
+        root.querySelector(`[data-story="${confirmingReset ? 'cancel-reset' : 'open-title'}"]`)?.focus();
+      } else if (cmd === 'wipe-fresh' && confirmingReset) {
         reset();
         onWipeFresh?.();
       } else if (cmd === 'open-title') {

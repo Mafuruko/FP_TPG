@@ -5,7 +5,9 @@ import { initializeDolphin, updateDolphin } from './dolphin.js';
 import { fishAnimations, initializeFish, updateFish, updateFishParticles } from './fish.js';
 import { recordGroundTravel, resolveVillagerSpacing, updateGroundParticles, villagerGroundTuning } from './ground.js';
 import { initializeLandWildlife, landWildlifeTuning, updateLandWildlife } from './land-wildlife.js';
-import { findRoute, sameTile, tileToWorld, walkable } from './geometry.js';
+import { findRoute, sameTile, tileToWorld, walkable, worldToTile } from './geometry.js';
+import { villagerWorkTuning } from './villagers.js';
+import { sourceCapacity } from './survival.js';
 import { initializeTurtle, updateShoreRipples, updateTurtle } from './turtle.js';
 import { createWildlifeDirector } from './wildlife-director.js';
 import { createInitialChallenges, createInitialStoryState, STORY_CONFIG } from './story.js';
@@ -130,7 +132,7 @@ export function createWorld(assets) {
       };
     }),
     objects: Object.fromEntries(map.objects.map(object => [object.id, {
-      state: object.state, amount: object.resource?.initialAmount ?? null,
+      state: object.state, amount: object.resource ? Math.min(sourceCapacity(object), object.resource.initialAmount) : null,
     }])),
     buildings: [],
     wildlife: wildlife.instances,
@@ -207,17 +209,24 @@ export function enableWildlifeDirector(world, options) {
 
 const mapFacing = { up: 'back', down: 'front', left: 'left', right: 'right' };
 
+export function villagerNavigationTile(world, villager) {
+  const tile = worldToTile(villager.position, world.map.meta.tileSize);
+  return walkable(world.collision, tile) ? tile : villager.tile;
+}
+
 export function moveVillager(world, villager, destinations, targetId = null) {
   const { tileSize } = world.map.meta;
-  const atCenter = sameTile(villager.position, tileToWorld(villager.tile, tileSize));
-  const route = findRoute(world.collision, villager.tile, destinations);
+  const start = villagerNavigationTile(world, villager);
+  const route = findRoute(world.collision, start, destinations);
   if (!route) return false;
   villager.route = route.path;
-  if (!atCenter && !sameTile(villager.route[0] || {}, villager.previousStep || {})) {
-    villager.route.unshift(villager.tile);
-  }
-  villager.currentTask = { type: targetId ? 'approach' : 'move', targetId, facing: mapFacing[route.target.facing] ?? null };
-  if (!route.path.length) finishMove(villager);
+  if (!sameTile(villager.position, tileToWorld(start, tileSize))
+    && !sameTile(villager.route[0] || {}, villager.previousStep || {})) villager.route.unshift(start);
+  villager.currentTask = {
+    type: targetId ? 'approach' : 'move', targetId, destination: route.target,
+    facing: mapFacing[route.target.facing] ?? null,
+  };
+  if (!route.path.length) finishMove(villager, world.state.time.seconds);
   return true;
 }
 
@@ -226,15 +235,17 @@ export function approachObject(world, villager, object) {
   return moveVillager(world, villager, positions || [], object.id);
 }
 
-function finishMove(villager) {
-  if (villager.currentTask.facing) villager.direction = villager.currentTask.facing;
+function finishMove(villager, seconds) {
+  if (villager.currentTask?.manual && villager.currentTask.type === 'move') villager.retryAt = seconds + 1.5;
+  if (villager.currentTask?.facing) villager.direction = villager.currentTask.facing;
   villager.currentTask = null;
   villager.animation = 'idle';
 }
 
-function advanceEntity(entity, distance, size, onDirection) {
+function advanceEntity(entity, distance, size, onDirection, canStep) {
   while (entity.route.length && distance > 0) {
     const tile = entity.route[0];
+    if (canStep && !canStep(tile)) break;
     const target = tileToWorld(tile, size);
     const dx = target.x - entity.position.x;
     const dy = target.y - entity.position.y;
@@ -297,18 +308,20 @@ export function updateWorld(world, delta) {
       continue;
     }
     const before = { ...villager.position };
+    if (villager.route.length) world.gameplay?.prepareMovement(villager);
     if (villager.route.length) {
       const carrying = villager.work?.phase === 'deliver';
       villager.animation = villager.lifeStage === 'baby' ? 'crawl' : carrying ? 'carry' : villager.snakeFlee ? 'run' : 'walk';
       const championMult = villager.special?.champion ? STORY_CONFIG.championSpeedMultiplier : 1;
       const speed = villagerGroundTuning[`${villager.animation}Speed`]
-        * (villager.lifeStage !== 'baby' && villager.quirks?.includes('fastWalker') ? 1.15 : 1)
+        * (villager.lifeStage !== 'baby' && villager.quirks?.includes('fastWalker') && villager.animation !== 'run'
+          ? villagerWorkTuning.fastWalker : 1)
         * championMult;
       advanceEntity(villager, elapsed * speed, world.map.meta.tileSize, (dx, dy) => {
         villager.direction = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'front' : 'back');
-      });
+      }, point => walkable(world.collision, point));
       villager.previousStep = villager.route[0] || null;
-      if (!villager.route.length) finishMove(villager);
+      if (!villager.route.length) finishMove(villager, time.seconds);
     }
     recordGroundTravel(world, villager, before, elapsed);
   }

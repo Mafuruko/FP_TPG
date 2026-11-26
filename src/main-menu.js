@@ -193,8 +193,9 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
       : `<h2 id="island-title">Settings</h2>${renderPreferences(preferences, fullscreenSupported)}
         <div class="island-settings-footer">
           ${button('Back', 'back', { glyph: 'arrowL' })}
-          ${wipeAll ? button('Wipe All Data', 'wipe-all', { glyph: 'delete' }) : ''}
-        </div>`;
+        </div>
+        ${wipeAll ? `<details class="settings-section"><summary>Reset game data</summary>
+          ${button('Delete all data…', 'wipe-all', { glyph: 'delete' })}</details>` : ''}`;
     root.innerHTML = `<section class="island-menu-card island-menu-${page}" role="dialog"
       aria-modal="true" aria-labelledby="island-title" tabindex="-1">
       ${contents}<p class="island-menu-error" role="status"></p>

@@ -8,8 +8,6 @@
   --font-body: 'Nunito Sans', sans-serif;
 }
 [hidden] { display: none !important; }
-* { scrollbar-width: none; }
-*::-webkit-scrollbar { display: none; width: 0; height: 0; }
 body { margin: 0; height: 100dvh; overflow: hidden; }
 main.gu { height: 100%; position: relative; overflow: hidden; font-family: var(--font-body); font-weight: 500; }
 canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; image-rendering: pixelated; }
@@ -310,10 +308,13 @@ main[data-mode="entering"] #title-screen {
   color: #fff3cf;
   font-size: 13px;
   font-weight: bold;
-  white-space: nowrap;
+  width: max-content;
+  max-width: min(280px, calc(100% - 16px));
+  box-sizing: border-box;
   pointer-events: none;
 }
-#drop-action img { image-rendering: pixelated; }
+#drop-action[data-issue="true"] { border-color: #e6bba5; }
+#drop-action img { flex: none; image-rendering: pixelated; }
 
 button, select { font: inherit; }
 h2, h3, h4, p { margin: 0; }
@@ -665,6 +666,9 @@ h2, h3, h4, p { margin: 0; }
 .villager-age-chip { font-size: 11px; color: #5e472f; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .villager-task-line { margin: 0 !important; font-size: 12px; color: #3b2a22; }
 .villager-quirks { margin: 0 !important; color: #6b4e28; font-size: 11px; font-weight: bold; }
+.villager-quirks [data-tip] { text-decoration: underline dotted; text-underline-offset: 2px; }
+.villager-work-options { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; }
+.villager-work-options select { max-width: 100%; }
 
 .villager-needs-bars { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 4px; }
 .need-bar-item { display: flex; align-items: center; gap: 4px; min-width: 0; }
@@ -687,6 +691,7 @@ h2, h3, h4, p { margin: 0; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 3px 6px;
   background: #efe2c4;
@@ -694,6 +699,24 @@ h2, h3, h4, p { margin: 0; }
   font-size: 11px;
   line-height: 1.2;
 }
+.villager-skill-progress {
+  display: block;
+  appearance: none;
+  width: 100%;
+  height: 5px;
+  border: 1px solid #96774d;
+  border-radius: 0;
+  color: #718450;
+  background: #d9c498;
+}
+.villager-skill-progress::-webkit-progress-bar { background: #d9c498; }
+.villager-skill-progress::-webkit-progress-value { background: #718450; }
+.villager-skill-progress::-moz-progress-bar { background: #718450; }
+.villager-skill-details { padding: 4px 7px; font-size: 12px; background: #f1e6c9; border: 1px solid #96774d; }
+.villager-skill-details summary { font-weight: 700; cursor: pointer; }
+.villager-skill-details > div { padding-top: 4px; }
+.villager-skill-details p { color: #5e472f; }
+.villager-roster-status { display: block; color: #5e472f; font-size: 10px; line-height: 1.25; }
 .skill-label { color: #3b2a22; font-weight: 600; }
 .skill-rank { white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; color: #5a442d; }
 .skill-rank[data-tier="1"] { color: #2c5b75; }
@@ -1373,4 +1396,204 @@ main[data-story="active"] .gu-paused { display: none; }
   .villager-needs-bars, .villager-roster, .research-grid, .ach-grid, .guide-topic-grid { grid-template-columns: 1fr; }
   .bld-picker-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .quest-tracker { width: min(300px, calc(100vw - 16px)); }
+}
+.food-forecast {
+  margin: 4px 8px 6px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.food-forecast[data-status="low"] { color: #73441f; }
+.food-forecast[data-status="critical"] { color: #942a24; font-weight: 800; }
+
+.villager-survival {
+  margin: 6px 0;
+  padding: 5px 8px;
+  border-left: 3px solid #83935d;
+  background: #f4e8ca;
+  white-space: pre-line;
+  line-height: 1.45;
+}
+
+.family-readiness-row {
+  padding: 6px 0;
+  border-top: 1px solid #c7ad82;
+}
+
+/* Keep navigation and headers in view while the content underneath scrolls. */
+#panel {
+  display: flex;
+  flex-direction: column;
+  max-height: min(72dvh, calc(100dvh - 84px));
+  padding: 0;
+}
+
+#panel .panel-heading {
+  flex: none;
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid #b59a70;
+  background: #e9d7b2;
+}
+
+#panel-title { margin: 0; }
+#panel-content {
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #94724d #e9d7b2;
+  padding: 9px 12px 12px;
+}
+
+.island-menu-card, .story-card, .debug { scrollbar-width: thin; scrollbar-color: #94724d #e9d7b2; }
+.hud-tab-slot > .debug { max-height: min(66dvh, 480px); overflow-y: auto; }
+.hud-window-scaler { max-width: calc(100vw - 12px); }
+.hud-tab-strip { flex-wrap: wrap; }
+.hud-tab, .hud-tab-label { white-space: normal; }
+:is(.panel, .quest-tracker, .island-menu-card, .story-card, .gu-toast, #drop-action) { overflow-wrap: anywhere; }
+:is(.panel, .quest-tracker, .story-card, .island-menu-card) :is(.gu-btn, .island-button) { max-width: 100%; white-space: normal; }
+.panel :is(.compact-chip, .compact-meta-badge, .villager-age-chip, .guide-topic-btn, .journal-row b) { white-space: normal; }
+.panel .guide-topic-btn > span { overflow: visible; text-overflow: clip; }
+.gu-btn > svg, .gu-btn > img { flex: none; }
+.gu-btn:focus-visible, .island-button:focus-visible, summary:focus-visible, select:focus-visible {
+  outline: 2px solid #34634a;
+  outline-offset: 2px;
+}
+#panel button, #panel select { min-height: 34px; }
+.panel :is(.gu-row, .compact-toolbar, .bld-card-head, .villager-card-head) { flex-wrap: wrap; }
+.villager-work-options { align-items: center; }
+.villager-work-options select { min-width: 0; max-width: 100%; }
+.villager-roster .entry { min-width: 0; text-align: left; }
+.villager-roster .entry > span { min-width: 0; }
+.need-bar-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 4px; }
+.need-bar-caption { line-height: 1.15; font-size: 11px; }
+.need-bar-track { grid-column: 1 / -1; min-width: 0; }
+.villager-actions-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 92px), 1fr)); }
+.profile-details, .settings-section { margin-block: 8px; border-top: 1px solid #bfa37a; padding-top: 6px; }
+.profile-details summary, .settings-section summary { cursor: pointer; min-height: 32px; align-content: center; font-weight: 800; }
+.quest-head { flex-wrap: wrap; }
+.quest-head-btns { margin-left: auto; }
+.quest-alert button { flex: none; }
+.food-forecast { margin: 3px 0 1px; }
+.nav-label { font-size: 11px; line-height: 1.15; }
+.hud-tab-slot > .gu-nav .gu-btn { display: flex; gap: 5px; justify-content: flex-start; min-height: 35px; }
+.hud-tab-slot > .gu-nav svg { width: 18px; height: 18px; }
+.story-card { box-sizing: border-box; max-height: min(75dvh, calc(100dvh - 34px)); }
+.story-card { overflow: hidden; }
+.story-card-head { min-height: 0; overflow: auto; }
+.story-actions { flex: none; }
+.story-reset-warning { flex-basis: 100%; font-weight: 700; }
+.story-director[data-blocking="false"] .story-card { max-height: 48dvh; }
+.story-director[data-dialogue-mode="ambient"] .story-card { max-height: 34dvh; }
+.settings-audio { display: grid; gap: 8px; }
+.settings-section { margin: 0; }
+.settings-section[open] > summary { margin-bottom: 6px; }
+.island-menu-card { max-height: calc(100dvh - 24px); }
+.island-button { min-height: 36px; }
+.founder-picker[open] { grid-column: 1 / -1; }
+.founder-option-grid { position: static; width: 100%; margin-top: 4px; box-shadow: none; }
+.guide-topic-select { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
+.guide-topic-select select { width: 100%; }
+.guide-steps-list { margin-block: 8px; font-size: 13px; }
+.gu-toasts {
+  box-sizing: border-box;
+  inset: auto auto 38px 8px;
+  width: min(350px, calc(100vw - 16px));
+  z-index: 22;
+}
+#panel-notice { flex: none; padding: 6px 12px; background: #f5e5b5; color: #523a22; }
+#panel-notice:empty { display: none; }
+
+/* Compact screens use a separate layout so viewport changes preserve desktop placements. */
+.hud-windows-layer.is-docked {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "resources clock" "quest camera" ". ." "nav nav";
+  align-items: start;
+  gap: 5px 8px;
+  padding: 6px 8px max(6px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+.is-docked .hud-window { position: relative; min-width: 0; }
+.is-docked .hud-window-scaler { width: 100%; max-width: none; }
+.is-docked :is(.hud-window-bar, .hud-resize-handle, [data-widget="selection"]) { display: none; }
+.is-docked [data-widget="resources"] { grid-area: resources; }
+.is-docked [data-widget="clock"] { grid-area: clock; }
+.is-docked [data-widget="quest"] { grid-area: quest; }
+.is-docked [data-widget="camera"] { grid-area: camera; justify-self: end; }
+.is-docked [data-widget="nav"] { grid-area: nav; }
+.is-docked :is([data-widget="menu"], [data-widget="dev"]) {
+  grid-column: 1 / -1;
+  grid-row: 2 / -2;
+  align-self: end;
+  justify-self: end;
+}
+.is-docked [data-widget="menu"] {
+  align-self: stretch;
+  width: min(460px, 100%);
+  container-type: size;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.is-docked[data-panel-open] :is([data-widget="quest"], [data-widget="camera"]) { visibility: hidden; }
+.is-docked #panel { width: 100%; max-height: 100cqh; }
+.is-docked [data-widget="dev"] { justify-self: start; }
+.is-docked[data-panel-open] [data-widget="dev"] { visibility: hidden; }
+.is-docked .hud-tab-slot > .gu-nav {
+  display: flex;
+  flex-flow: row nowrap;
+  gap: 4px;
+  padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+.is-docked .gu-nav .gu-btn { flex: 1 0 44px; flex-direction: column; justify-content: center; min-height: 44px; padding: 3px 2px; gap: 2px; }
+.is-docked .hud-tab-slot .gu-panel { border-top-width: 2px; }
+.is-docked .quest-tracker { width: 100%; }
+.is-docked .gu-res { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+.is-docked .gu-ctr { display: flex; justify-content: center; min-width: 0; gap: 3px; padding: 3px 0; }
+.is-docked .gu-ctr > :is(svg, img) { flex: none; width: 14px; height: 14px; }
+.is-docked .gu-ctr span { min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
+.is-docked [data-widget="clock"] .gu-row { flex-wrap: wrap; gap: 4px; }
+.is-docked :is([data-widget="clock"], [data-widget="camera"]) .gu-btn { min-width: 31px; min-height: 30px; }
+.is-docked [data-widget="clock"] .gu-row svg { width: 16px; height: 16px; }
+main:has(.hud-windows-layer.is-docked) #controls { display: none; }
+main:has(.hud-windows-layer.is-docked) .bottom { bottom: 66px; }
+main:has(.hud-windows-layer.is-docked) .gu-toasts { bottom: 68px; }
+.is-docked .desktop-hud-help { display: none; }
+main:has(.hud-windows-layer.is-docked) .story-director[data-blocking="false"] { padding-bottom: 64px; }
+main:has(.is-docked[data-panel-open]) .story-director[data-dialogue-mode="ambient"] { visibility: hidden; }
+main:has(.is-docked[data-panel-open]) .story-director[data-dialogue-mode="guide"] { inset: 0 0 auto; padding: 6px 8px; }
+main:has(.is-docked[data-panel-open]) .story-director[data-dialogue-mode="guide"] .story-card { max-height: 25dvh; }
+
+@media (max-width: 580px) {
+  .hud-windows-layer.is-docked {
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    grid-template-areas: "resources resources" "clock clock" "quest quest" ". ." "nav nav";
+  }
+  .is-docked [data-widget="camera"] { grid-area: 4 / 2 / 5 / 3; align-self: end; }
+  .is-docked :is([data-widget="menu"], [data-widget="dev"]) { grid-row: 3 / -2; }
+  .is-docked [data-widget="menu"] { width: 100%; }
+  .is-docked [data-widget="clock"] .gu-panel { display: flex; flex-wrap: wrap; gap: 4px 7px; align-items: center; justify-content: space-between; }
+  .is-docked .gu-nav .nav-label { font-size: 10px; }
+}
+
+@media (max-height: 480px) {
+  .story-director[data-blocking="false"] .story-card { max-height: 38dvh; }
+}
+
+@media (max-width: 355px) {
+  .is-docked .hud-tab-slot > .gu-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  main:has(.hud-windows-layer.is-docked) .bottom { bottom: 111px; }
+  main:has(.hud-windows-layer.is-docked) .gu-toasts { bottom: 114px; }
+  main:has(.hud-windows-layer.is-docked:not([data-panel-open])) .story-director[data-blocking="false"] { padding-bottom: 111px; }
 }

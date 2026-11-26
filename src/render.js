@@ -256,7 +256,9 @@ export function createRenderer(canvas, world, camera, view) {
   }
 
   function villagers() {
-    return state.villagers.map(entity => {
+    const carried = new Map(state.villagers.filter(member => member.caregiverId && member.development === 'carried')
+      .map(member => [member.caregiverId, member]));
+    return state.villagers.filter(member => member.development !== 'carried' || !member.caregiverId).map(entity => {
       const config = {
         ...entity.appearance, name: entity.name, lifeStage: entity.lifeStage,
         expression: villagerExpression(entity, state.time.seconds),
@@ -264,7 +266,10 @@ export function createRenderer(canvas, world, camera, view) {
       };
       const reveal = view.mode === 'playing' && world.collectibleReveals?.get(entity.id);
       const { animations } = assets.villager;
-      const animation = reveal ? 'collectLift' : entity.animation;
+      const baby = carried.get(entity.id);
+      const animation = reveal ? 'collectLift'
+        : baby && ['walk', 'run'].includes(entity.animation) ? 'carryBaby'
+          : baby && entity.animation === 'idle' ? 'holdBaby' : entity.animation;
       const definition = animations[animation];
       const skill = jobVisual(entity);
       const tier = skill?.tier ?? 0;
@@ -281,6 +286,7 @@ export function createRenderer(canvas, world, camera, view) {
       }, groundPosition(entity), 'villager');
       sprite.ground = contactVisual(entity, 'villager');
       sprite.reveal = reveal;
+      sprite.baby = baby;
       sprite.y += sprite.ground.offsetY;
       const landingAge = state.time.seconds - entity.landedAt;
       if (landingAge >= 0 && landingAge < 0.19) {
@@ -289,6 +295,16 @@ export function createRenderer(canvas, world, camera, view) {
       }
       return sprite;
     });
+  }
+
+  function paintHeldBaby(sprite, bounds) {
+    const baby = sprite.baby;
+    if (!baby || ['holdBaby', 'carryBaby'].includes(sprite.options.animation)) return;
+    const direction = sprite.options.direction;
+    const offset = direction === 'left' ? -5 : 5;
+    paintSprite(describeSprite(baby, assets.villager, {
+      config: { ...baby.appearance, lifeStage: 'baby' }, animation: 'idle', direction, frame: 0, shadow: false,
+    }, { x: sprite.position.x + offset, y: sprite.position.y - 11 }), bounds);
   }
 
   function drawCollectibleReveal(sprite) {
@@ -508,36 +524,53 @@ export function createRenderer(canvas, world, camera, view) {
     context.restore();
   }
 
+  function drawTargetOutline({ target, position, label, issue }, alpha = 1) {
+    if (target && (label || issue)) {
+      const point = target.entity.waterTarget || target.entity.tile;
+      const anchor = point ? tileToWorld(point, tileSize) : position;
+      if (!target.width && !anchor) return;
+      const box = target.width ? target : { x: anchor.x - 8, y: anchor.y - 8, width: 16, height: 16 };
+      const left = target.width ? box.x - 1 : box.x - 8;
+      const top = target.width ? box.y - 1 : box.y - 8;
+      const right = left + box.width + 1;
+      const bottom = top + box.height + 1;
+      context.save();
+      context.globalAlpha *= alpha;
+      context.fillStyle = issue ? '#edc9ae' : '#f9db87';
+      const length = issue ? 2 : 4;
+      for (const x of [left, right]) {
+        for (const y of [top, bottom]) {
+          context.fillRect(x, y, 1, y === top ? length : -length);
+          context.fillRect(x, y, x === left ? length : -length, 1);
+        }
+      }
+      context.restore();
+    }
+  }
+
   function drawDrag(sprite) {
-    const { position, landing, target, label, startedAt } = view.drag;
+    const { position, landing, label, startedAt, sleepy } = view.drag;
     if (landing) {
       const point = tileToWorld(landing, tileSize);
       drawContactShadow({ position: point }, { shadowWidth: 12, shadowHeight: 4, shadowOpacity: 0.43 }, '#1b1926');
       drawMarker(point, label ? '#e8d180' : '#ddd1ac', 7);
     }
-    if (label && target) {
-      const box = target.width ? target : { ...tileToWorld(worldToTile(position, tileSize), tileSize), width: 16, height: 16 };
-      const left = target.width ? box.x - 1 : box.x - 8;
-      const top = target.width ? box.y - 1 : box.y - 8;
-      const right = left + box.width + 1;
-      const bottom = top + box.height + 1;
-      context.fillStyle = '#f9db87';
-      for (const x of [left, right]) {
-        for (const y of [top, bottom]) {
-          context.fillRect(x, y, 1, y === top ? 4 : -4);
-          context.fillRect(x, y, x === left ? 4 : -4, 1);
-        }
-      }
-    }
+    drawTargetOutline(view.drag);
     const { animations } = sprite.asset;
     const fallback = sprite.entity.lifeStage === 'baby' ? 'cry' : 'celebrate';
-    const animation = animations.pickup ? 'pickup' : animations[fallback] ? fallback : 'idle';
+    const age = Math.max(0, performance.now() - startedAt);
+    const waking = sleepy && age < 170;
+    const animation = waking ? 'idle' : animations.pickup ? 'pickup' : animations[fallback] ? fallback : 'idle';
     const definition = animations[animation];
-    const frame = frameAt(definition, Math.max(0, performance.now() - startedAt) / 1000);
-    paintSprite(describeSprite(sprite.entity, sprite.asset, {
-      ...sprite.options, config: { ...sprite.options.config, heldObject: 'none', blinking: false },
+    const frame = frameAt(definition, age / 1000);
+    const dragged = describeSprite(sprite.entity, sprite.asset, {
+      ...sprite.options,
+      config: { ...sprite.options.config, expression: waking ? 'tired' : 'surprised', heldObject: 'none', blinking: waking },
       animation, frame, direction: 'front', rank: 0,
-    }, { x: Math.round(position.x), y: Math.round(position.y) - 8 }));
+    }, { x: Math.round(position.x), y: Math.round(position.y) - 8 });
+    dragged.baby = sprite.baby;
+    paintSprite(dragged);
+    paintHeldBaby(dragged);
   }
 
   function drawDebug(sprites) {
@@ -687,6 +720,7 @@ export function createRenderer(canvas, world, camera, view) {
       else {
         if (item.ground) drawContactShadow(item, item.ground, '#302a23', atmosphere.shadow);
         paintSprite(item, bounds);
+        if (item.baby) paintHeldBaby(item, bounds);
       }
     }
     for (const sprite of foreground) {
@@ -711,9 +745,21 @@ export function createRenderer(canvas, world, camera, view) {
     const selected = sprites.find(sprite => sprite.entity.id === view.selectedVillager);
     if (selected) {
       drawStudioMarker('marker_selection_ring', selected.position);
+      const cue = view.commandCue?.villagerId === selected.entity.id ? view.commandCue : null;
       const destination = selected.entity.route.at(-1);
       if (destination) drawStudioMarker('marker_destination', tileToWorld(destination, tileSize));
+      else if (cue?.arrivedAt) {
+        const opacity = Math.max(0, 1 - (performance.now() - cue.arrivedAt) / 390);
+        if (opacity) {
+          context.save();
+          context.globalAlpha = opacity;
+          drawStudioMarker('marker_destination', tileToWorld(cue.destination, tileSize));
+          context.restore();
+        }
+      }
+      if (!view.drag && cue && cue.until > performance.now()) drawTargetOutline(cue);
     }
+    if (!view.drag && view.interactionPreview) drawTargetOutline(view.interactionPreview, 0.75);
     const object = world.objects.get(view.selectedObject);
     if (object) drawStudioMarker('marker_interactable', object.anchor || tileToWorld(object.standPosition, tileSize));
     for (const sprite of villagersOnMap) {
@@ -766,7 +812,7 @@ export function createRenderer(canvas, world, camera, view) {
         context.restore();
       }
       const reaction = v.reaction;
-      if (v.id !== view.drag?.id && reaction?.until > state.time.seconds) {
+      if (v.id !== view.drag?.id && reaction?.icon && reaction.until > state.time.seconds) {
         drawStudioMarker(`icon_${reaction.icon}`, { x: sprite.position.x, y: sprite.y - 6 });
       }
     }
@@ -939,7 +985,7 @@ export function createRenderer(canvas, world, camera, view) {
     // Fallback against live villager coordinates so grabbing works even before first frame mask
     const radius = 14 + pad;
     for (const villager of state.villagers) {
-      if (villager.id === excludeId) continue;
+      if (villager.id === excludeId || villager.development === 'carried' && villager.caregiverId) continue;
       const pos = groundPosition(villager);
       const d = Math.hypot(position.x - pos.x, position.y - (pos.y - 8));
       if (d <= radius && d < bestDist) {
@@ -964,8 +1010,6 @@ export function createRenderer(canvas, world, camera, view) {
       && (Math.hypot(position.x - butterfly.x, position.y - butterfly.y) <= 10
         || Math.hypot(position.x - entity.position.x, position.y - entity.position.y) <= 8));
     if (!object && nearbyButterfly) return nearbyButterfly;
-    const villager = findVillagerExpanded(position, excludeId);
-    if (villager) return villager;
     if (object) return object;
     const grave = state.graves?.find(entry => entry.tile.x === tile.x && entry.tile.y === tile.y);
     if (grave) return { hit: 'grave', entity: grave };
@@ -973,7 +1017,7 @@ export function createRenderer(canvas, world, camera, view) {
     if (crop) return { hit: 'crop', entity: crop };
     const spot = map.fishingSpots.find(f => [f.standPosition, f.waterTarget].some(point => point.x === tile.x && point.y === tile.y));
     if (spot) return { hit: 'object', entity: spot };
-    return null;
+    return findVillagerExpanded(position, excludeId);
   }
 
   return { render, pick };

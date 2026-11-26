@@ -190,13 +190,19 @@ export function saveHudLayout(storage, groups, config = HUD_CONFIG) {
 export function createHudWindowManager(layer, widgets, storage, config = HUD_CONFIG) {
   const widgetMap = new Map(widgets.map(w => [w.id, w]));
   const widgetIds = widgets.map(w => w.id);
-  let groups = readHudLayout(storage, widgetIds, config);
+  const compactScreen = window.matchMedia('(max-width: 1050px), (max-height: 620px)');
+  let desktopGroups = readHudLayout(storage, widgetIds, config);
+  const newDockLayout = () => sanitizeHudLayout(null, widgetIds, DEFAULT_HUD_LAYOUT, config);
+  let groups = compactScreen.matches ? newDockLayout() : desktopGroups;
   let zTop = config.baseZIndex;
   const groupElements = new Map();
   let dragGhost = null;
 
   function persist() {
-    saveHudLayout(storage, groups, config);
+    if (!compactScreen.matches) {
+      desktopGroups = groups;
+      saveHudLayout(storage, groups, config);
+    }
   }
 
   function isWidgetVisible(id) {
@@ -230,6 +236,7 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
     if (win.hidden) return;
 
     const active = ensureActiveTab(group, visibleTabs);
+    win.dataset.widget = active;
     body.hidden = group.minimized;
     win.classList.toggle('is-minimized', group.minimized);
     win.classList.toggle('has-tabs', visibleTabs.length > 1);
@@ -238,17 +245,14 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
       slot.hidden = id !== active;
     }
 
+    if (compactScreen.matches) return;
     const safeScale = clampWindowScale(group.scale, { width: natW, height: natH }, viewport, config);
-    group.scale = safeScale;
 
     const scaledW = Math.round(natW * safeScale);
     const scaledH = Math.round(natH * safeScale);
     const clamped = clampWindowPercent(group.xPct, group.yPct, { width: scaledW, height: scaledH }, viewport, config);
-    group.xPct = clamped.xPct;
-    group.yPct = clamped.yPct;
-
-    const leftVal = `${group.xPct.toFixed(3)}%`;
-    const topVal = `${group.yPct.toFixed(3)}%`;
+    const leftVal = `${clamped.xPct.toFixed(3)}%`;
+    const topVal = `${clamped.yPct.toFixed(3)}%`;
     const wVal = `${scaledW}px`;
     const hVal = `${scaledH}px`;
     const trVal = `scale(${safeScale.toFixed(4)})`;
@@ -276,6 +280,10 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
   function syncGroupGeometry(group, remeasure = true) {
     const record = groupElements.get(group.id);
     if (!record) return;
+    if (compactScreen.matches) {
+      applyGroupGeometry(group, 1, 1, {});
+      return;
+    }
     const { win, scaler, body, slots } = record;
     const visibleTabs = visibleTabsOf(group);
     win.hidden = visibleTabs.length === 0;
@@ -302,6 +310,10 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
   }
 
   function syncAllBatched(remeasure = false) {
+    if (compactScreen.matches) {
+      for (const group of groups) applyGroupGeometry(group, 1, 1, {});
+      return;
+    }
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     const toMeasure = [];
     // Phase 1: batch visibility + reset writes before any layout read.
@@ -365,8 +377,9 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
 
     const startX = event.clientX;
     const startY = event.clientY;
-    const startXPct = group.xPct;
-    const startYPct = group.yPct;
+    const startRect = record.win.getBoundingClientRect();
+    const startXPct = startRect.left / Math.max(1, window.innerWidth) * 100;
+    const startYPct = startRect.top / Math.max(1, window.innerHeight) * 100;
     const isSingleTabDetach = Boolean(tabId && visibleTabsOf(group).length > 1);
     let moved = false;
     let detached = false;
@@ -489,9 +502,9 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
     const originY = rect.top;
     const startW = Math.max(1, rect.width);
     const startH = Math.max(1, rect.height);
-    const startScale = group.scale;
-    const natW = startW / startScale;
-    const natH = startH / startScale;
+    const natW = record.natW || startW;
+    const natH = record.natH || startH;
+    const startScale = startW / natW;
     const startDist = Math.max(24, Math.hypot(event.clientX - originX, event.clientY - originY));
 
     record.win.classList.add('is-resizing');
@@ -528,6 +541,7 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
     for (const w of widgets) {
       if (w.element.parentNode) w.element.parentNode.removeChild(w.element);
     }
+    layer.classList.toggle('is-docked', compactScreen.matches);
     layer.replaceChildren();
     groupElements.clear();
 
@@ -547,7 +561,7 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
       const header = document.createElement('div');
       header.className = 'hud-window-bar';
       header.addEventListener('pointerdown', event => {
-        if (!event.target.closest('.hud-tab')) startGroupDrag(event, group, null);
+        if (!compactScreen.matches && !event.target.closest('.hud-tab, .hud-min-btn')) startGroupDrag(event, group, null);
       });
 
       const tabBar = document.createElement('div');
@@ -567,7 +581,14 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
         tabBtn.innerHTML = `<span class="hud-tab-icon">${w.iconHtml()}</span>${text ? `<span class="hud-tab-label">${text}</span>` : ''}`;
         tabBtn.addEventListener('pointerdown', event => {
           event.stopPropagation();
-          startGroupDrag(event, group, tabId);
+          if (!compactScreen.matches) startGroupDrag(event, group, tabId);
+        });
+        tabBtn.addEventListener('click', event => {
+          if (event.detail !== 0 || compactScreen.matches) return;
+          if (group.activeTab === tabId) group.minimized = !group.minimized;
+          else { group.activeTab = tabId; group.minimized = false; }
+          syncGroupGeometry(group);
+          persist();
         });
         tabBar.appendChild(tabBtn);
       }
@@ -663,9 +684,10 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
   }
 
   function resetLayout() {
-    groups = sanitizeHudLayout(null, widgetIds, DEFAULT_HUD_LAYOUT, config);
+    desktopGroups = newDockLayout();
+    groups = compactScreen.matches ? newDockLayout() : desktopGroups;
     rebuild();
-    persist();
+    saveHudLayout(storage, desktopGroups, config);
   }
 
   function clampAll(remeasure = false) {
@@ -677,7 +699,11 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
     if (group) syncGroupGeometry(group, true);
   }
 
-  window.addEventListener('resize', () => syncAllBatched(false));
+  window.addEventListener('resize', () => syncAllBatched(true));
+  compactScreen.addEventListener('change', () => {
+    groups = compactScreen.matches ? newDockLayout() : desktopGroups;
+    rebuild();
+  });
   rebuild();
 
   return {
@@ -686,7 +712,7 @@ export function createHudWindowManager(layer, widgets, storage, config = HUD_CON
     resetLayout,
     clampAll,
     syncWidget,
-    getLayout: () => cloneLayout(groups),
+    getLayout: () => cloneLayout(compactScreen.matches ? desktopGroups : groups),
     merge(sourceGroupId, targetGroupId, tabId = null) {
       groups = mergeGroups(groups, sourceGroupId, targetGroupId, tabId);
       rebuild();

@@ -1,43 +1,54 @@
+import { survival, treatmentEffects } from './survival.js';
+
 export const SKILL_CONFIG = {
   levelsPerTier: 10,
-  masterLevelSpan: 10,
+  thresholds: [0, 18, 54, 114],
+  levelFractions: [0, 0.055, 0.11, 0.22, 0.33, 0.44, 0.55, 0.67, 0.78, 0.89],
   needThresholds: { high: 65, mid: 35 },
 };
 
-export const villagerSkills = {
-  gathering: { label: 'Gathering', jobs: ['gather', 'chop', 'mine', 'farm', 'fish'] },
-  building: { label: 'Building', jobs: ['build'] },
-  research: { label: 'Research', jobs: ['research'] },
-  healing: { label: 'Healing', jobs: ['heal'] },
+export const villagerWorkTuning = {
+  cycleSeconds: 3.2, cycleEnergy: 6, restBelow: 45, restUntil: 76,
+  lowFed: 35, tiredRate: 0.85, restRecovery: 13, shelteredRecovery: 17, restRadius: 6,
+  retrySeconds: 4, decisionSeconds: 2, stopSeconds: 12, quietAtCamp: 3, talkRecovery: 1.1,
+  woodFloor: 35, stoneFloor: 25, knowledgeFloor: 35,
+  healXpPerHealth: 20, healCureXp: 4, memorialComfortCooldown: 60,
+  fastWalker: 1.15, curiousResearch: 1.08,
 };
 
-const ranks = [
-  { name: 'Trainee', threshold: 0, workTime: 1, capacity: 2 },
-  { name: 'Adept', threshold: 5, workTime: 0.82, capacity: 3 },
-  { name: 'Master', threshold: 14, workTime: 0.65, capacity: 5 },
-];
+export const villagerSkills = {
+  gathering: { label: 'Gathering', jobs: ['gather', 'chop', 'mine', 'farm', 'fish'],
+    bonuses: [{ workTime: 1, capacity: 2 }, { workTime: 0.90, capacity: 3 }, { workTime: 0.80, capacity: 5 }] },
+  building: { label: 'Building', jobs: ['build'], bonuses: [{ workTime: 1 }, { workTime: 0.86 }, { workTime: 0.72 }] },
+  research: { label: 'Research', jobs: ['research'], bonuses: [{ knowledge: 0 }, { knowledge: 1 }, { knowledge: 2 }] },
+  healing: { label: 'Healing', jobs: ['heal'], bonuses: [{ treatment: 50 }, { treatment: 62 }, { treatment: 75 }] },
+};
 
-export function skillLevelInTier(xp, rank, next, config = SKILL_CONFIG) {
-  const maxLevel = config.levelsPerTier;
-  const localXp = Math.max(0, xp - rank.threshold);
-  if (next) {
-    const span = Math.max(1, next.threshold - rank.threshold);
-    if (span === 1) return maxLevel;
-    return Math.max(1, Math.min(maxLevel, 1 + Math.round((localXp / (span - 1)) * (maxLevel - 1))));
-  }
-  const masterSpan = Math.max(2, config.masterLevelSpan);
-  return Math.max(1, Math.min(maxLevel, 1 + Math.round((Math.min(localXp, masterSpan - 1) / (masterSpan - 1)) * (maxLevel - 1))));
-}
+const rankNames = ['Trainee', 'Adept', 'Master'];
+const skillByJob = new Map(Object.entries(villagerSkills).flatMap(([skill, def]) => def.jobs.map(job => [job, skill])));
+export const skillForJob = job => skillByJob.get(job);
 
 export function skillProgress(villager, skill, config = SKILL_CONFIG) {
-  const xp = villagerSkills[skill].jobs.reduce((total, job) => total + (villager.skills?.[job] ?? 0), 0);
-  const tier = ranks.findLastIndex(rank => xp >= rank.threshold);
-  const rank = ranks[tier];
-  const next = ranks[tier + 1];
-  const progress = next ? (xp - rank.threshold) / (next.threshold - rank.threshold) : 1;
+  const { jobs, bonuses } = villagerSkills[skill];
+  const xp = jobs.reduce((total, job) => total + (villager.skills?.[job] ?? 0), 0);
+  const tier = rankNames.findLastIndex((_, index) => xp >= config.thresholds[index]);
+  const rankAt = index => ({ name: rankNames[index], threshold: config.thresholds[index], workTime: 1, ...bonuses[index] });
+  const rank = rankAt(tier);
+  const next = tier < rankNames.length - 1 ? rankAt(tier + 1) : null;
+  const goal = config.thresholds[tier + 1];
+  const progress = Math.min(1, (xp - rank.threshold) / (goal - rank.threshold));
   const maxLevel = config.levelsPerTier;
-  const level = skillLevelInTier(xp, rank, next, config);
-  return { xp, tier, rank, next, progress, level, maxLevel };
+  const level = 1 + config.levelFractions.findLastIndex(fraction => xp - rank.threshold >= Math.round(fraction * (goal - rank.threshold)));
+  return { xp, tier, rank, next, goal, progress, level, maxLevel };
+}
+
+export function skillBenefits(skill, rank) {
+  if (skill === 'gathering') return `Carries ${rank.capacity} per trip · ${Math.round(rank.workTime * 100)}% cycle time`;
+  if (skill === 'building') return `${Math.round(rank.workTime * 100)}% construction cycle time`;
+  if (skill === 'research') return `${2 + rank.knowledge} Knowledge at camp · ${3 + rank.knowledge} at hut`;
+  const normal = treatmentEffects(rank.treatment);
+  const hut = treatmentEffects(rank.treatment + survival.healingHutPower);
+  return `+${normal.recovery.toFixed(1)} Health, −${normal.relief.toFixed(1)} illness · With hut +${hut.recovery.toFixed(1)} Health, −${hut.relief.toFixed(1)} illness`;
 }
 
 export function needStatus(value, config = SKILL_CONFIG) {
@@ -48,7 +59,7 @@ export function needStatus(value, config = SKILL_CONFIG) {
 }
 
 export function jobSkill(villager, job) {
-  const skill = Object.keys(villagerSkills).find(key => villagerSkills[key].jobs.includes(job));
+  const skill = skillForJob(job);
   return skill ? skillProgress(villager, skill) : null;
 }
 
@@ -57,6 +68,29 @@ export const villagerQuirks = {
   fastWalker: 'Fast Walker',
   curious: 'Curious',
 };
+
+export const quirkBenefits = {
+  snakeShy: 'Briefly flees nearby snakes during free time, then returns to their routine.',
+  fastWalker: `Walks and hauls ${Math.round((villagerWorkTuning.fastWalker - 1) * 100)}% faster.`,
+  curious: `Studies ${Math.round((villagerWorkTuning.curiousResearch - 1) * 100)}% faster and visits nearby landmarks.`,
+};
+
+export function initializeVillagerProgress(villager) {
+  if (villager.workPreference !== 'rest' && !Object.hasOwn(villagerSkills, villager.workPreference)) villager.workPreference = 'auto';
+  if (villager.skillVersion === 2) return;
+  const old = [0, 5, 14, 24];
+  for (const [skill, { jobs }] of Object.entries(villagerSkills)) {
+    const { xp } = skillProgress(villager, skill);
+    if (!xp) continue;
+    const tier = old.slice(0, 3).findLastIndex(threshold => xp >= threshold);
+    const { thresholds } = SKILL_CONFIG;
+    const converted = thresholds[tier] + Math.floor((xp - old[tier]) *
+      (thresholds[tier + 1] - thresholds[tier]) / (old[tier + 1] - old[tier]));
+    // Credit migration to the first job so fishing practice still uses its own completed trips.
+    villager.skills[jobs[0]] = (villager.skills[jobs[0]] || 0) + converted - xp;
+  }
+  villager.skillVersion = 2;
+}
 
 export function initializeVillagerQuirks(villager) {
   if (Array.isArray(villager.quirks)) return;
@@ -84,7 +118,8 @@ export function villagerPortraitExpression(villager) {
 
 export function villagerExpression(villager, seconds) {
   const { animation, appearance, conversation, illness, needs, reaction, snakeFlee, work } = villager;
-  if (reaction?.until > seconds && reactionFaces[reaction.icon]) return reactionFaces[reaction.icon];
+  const reactionFace = reaction?.expression || reactionFaces[reaction?.icon];
+  if (reaction?.until > seconds && reactionFace) return reactionFace;
   if (snakeFlee) return 'worried';
   if (illness || needs.health < 55) return 'sad';
   if (animation === 'sleep' || needs.energy < 40) return 'tired';
@@ -155,7 +190,7 @@ export function promoteToChampion(villager) {
   villager.skills ??= {};
   for (const def of Object.values(villagerSkills)) {
     for (const job of def.jobs) {
-      villager.skills[job] = Math.max(villager.skills[job] || 0, 25);
+      villager.skills[job] = Math.max(villager.skills[job] || 0, SKILL_CONFIG.thresholds.at(-1));
     }
   }
   villager.needs.health = 100;

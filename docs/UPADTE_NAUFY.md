@@ -583,3 +583,90 @@ This document records Naufy’s Island Colony changes from the first playable vi
 1. Head around the west side of the central pond and find the spring just off the north-bank path.
 2. Drop an adult onto the blocked spring with 5 Stone. Look for the stream and ripples where the outlet enters the pond.
 3. Load a save with the spring already restored and check that the flow and farm progress carry over.
+
+---
+
+## Patch 31 — Unified Villager Commands
+
+**Files**
+
+`src/gameplay.js`, `src/world.js`, `src/main.js`, `src/render.js`, `src/ui.js`, `src/villagers.js`, `src/preferences.js`, `game.css`, `tests/foundation.test.js`
+
+### Summary
+
+- Mouse and touch drops still land and start valid jobs immediately. Click-to-send walks to a reachable working position before beginning the same job. Both use the same task restrictions and supply delivery rules.
+- New commands clear superseded movement and tasks. Routes can recover from newly blocked tiles, and targets that disappear or change are checked before work and rewards.
+- Added shared hover and drag feedback for job names and requirements, temporary target outlines, a fading arrival marker, and distinct travel and work status lines.
+- Added brief contextual reactions and quiet command cues using the existing animation and sound systems. Desktop players can Shift-click another villager to send the selected villager to them.
+
+### What to check
+
+1. Send a villager to a berry bush and check that they walk before gathering. Drag that villager onto a tree and check that chopping starts on landing.
+2. Try a locked fishing spot with both controls. Check that both show the same requirement. Try releasing in water or outside the canvas and check that the villager stays safe.
+3. Change a walking villager’s destination or pick them up mid-job. Check that the old route, status, and pending work clear.
+4. Use touch to tap and select a villager, then hold and drag them to a task. Check that the action preview sits above the finger.
+
+---
+
+## Patch 32 — Villager Work, Skills, and Daily Life
+
+**Files**
+
+`src/gameplay.js`, `src/villagers.js`, `src/world.js`, `src/dev-tools.js`, `src/main.js`, `src/ui.js`, `game.css`, `tests/foundation.test.js`, `tests/features.test.js`, `docs/VILLAGER_BALANCE.md`, `docs/ARCHITECTURE.md`
+
+### Summary
+
+- XP now comes from actual deliveries, build progress, research, and treatment. The four skills have rank-specific benefits, and older saves retain earned ranks.
+- Added Auto, four skill focuses, and Rest / Idle. Villagers account for stock, reachable work, and fatigue. Manual orders take priority, and tired villagers finish their haul before resting and resuming an order.
+- Loaded supplies are reserved until delivery, including across saves. Higher Gathering ranks carry larger loads and can choose closer finished food storage.
+- The profile and roster show work status, skill progress, bonuses, and quirks. Stop Work gives villagers a break, and held villagers can be released early. Dev Mode shows work and output counters.
+
+### What to check
+
+1. Set one villager to Research and another to Rest / Idle. Give the resting villager an explicit gathering order and check that the delivery finishes before they return to leisure.
+2. Compare a Trainee and Master on the same gathering route. Save while a worker is carrying supplies, then load and check that the delivery awards supplies and XP once.
+3. Expand Skill benefits to see the current and next ranks. Use Stop Moving and Release Hold while the villager is working, and check that they pick up where they left off.
+
+---
+
+## Patch 33 — Survival, Families, and Generations
+
+**Files**
+
+`src/survival.js`, `src/gameplay.js`, `src/world.js`, `src/villagers.js`, `src/story.js`, `src/dev-tools.js`, `src/main.js`, `src/render.js`, `src/ui.js`, `game.css`, `tests/features.test.js`, `tests/foundation.test.js`, `docs/SURVIVAL_BALANCE.md`, `docs/VILLAGER_BALANCE.md`, `docs/ARCHITECTURE.md`
+
+### Summary
+
+- Added a daily food forecast, slower forage replenishment, larger fishing and farm hauls, and gradual starvation warnings and damage.
+- Added mild, serious, and critical illness with timed treatment, a tangible Healing Hut benefit, limited contagion, and recovery. The first guided illness remains safe.
+- Families now build familiarity, become partners, and deliberately plan a pregnancy. Newborns are carried, crawl in a safe area, and then grow into children. A Family House can welcome an unrelated adult after the first island-born child grows up.
+- Calendar-based aging gives the founders time to raise a child. Elders retain skills, memorials preserve character history, and Auron comments on major milestones.
+
+### What to check
+
+1. Compare the food forecast with one founder gathering and with both assigned to other work. Watch the warnings as the reserve falls.
+2. Assign a healthy healer to a sick villager and interrupt the first treatment. Try again and compare the results with a completed Healing Hut.
+3. Build a Family House, use the partner and baby commands, and save during pregnancy. Continue the slot and check that one baby is born, carried, and later able to crawl.
+4. Open a founder’s memorial and check their recorded family and strongest skill. Send another villager to lay flowers.
+
+---
+
+## Patch 34 — Readable Menus and Responsive HUD
+
+**Files**
+
+`game.css`, `index.html`, `src/hud-windows.js`, `src/ui.js`, `src/main-menu.js`, `src/preferences.js`, `src/story-ui.js`
+
+### Summary
+
+- Docked the HUD on phones and short windows so Resources, Clock, and navigation have their own space. Desktop HUD placement and resizing still save normally.
+- Long panels scroll beneath an always-visible heading. Labels and long names wrap inside their cards, and notifications appear inside the current panel.
+- Shortened the Island Guide and Villager profile. Skill comparisons, family instructions, and advanced settings open on demand.
+- Founder appearance options expand inline. Long story text scrolls while its actions stay visible. The colony-loss screen asks for confirmation before resetting all data.
+
+### What to check
+
+1. Open Research, Journal, and Settings on a narrow or short window. Scroll to the bottom and check that Close remains visible.
+2. Open a villager with a long name, then expand Skills & traits. Check that needs and actions are easy to find and text wraps inside the profile.
+3. Customize both founders on a phone-sized window. Check that the appearance choices and Start Island button are reachable.
+4. Resize a desktop window down to a phone width, then back up. Check that the desktop HUD layout returns.
