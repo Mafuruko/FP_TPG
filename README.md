@@ -1,6 +1,6 @@
 # Island Colony
 
-A peaceful top-down pixel-art colony simulator set on an 80 × 64-tile tropical island. Guide five starting survivors — **Luna**, **Kai**, **Mira**, **Tavi**, and **Oren** — as they gather supplies, construct a village, raise families, unlock new abilities, discover rare collectibles, and restore seven mysterious island landmarks.
+A peaceful top-down pixel-art colony simulator set on an 80 × 64-tile tropical island. Name your island and create two starting villagers. Guide them as they gather supplies, construct a village, raise families, unlock new abilities, discover rare collectibles, and restore seven mysterious island landmarks.
 
 Built with vanilla ES modules, Canvas 2D, procedural SVG studio assets, and a zero-dependency Node.js development server.
 
@@ -79,7 +79,7 @@ Click any landmark without a villager selected to view its clue, or assign a vil
 - **Panels & Accessibility**: Navigation rail for **Build**, **Villagers**, **Research**, **Collection Book**, **Achievements**, and **Settings** (plus **Pause**, **Save & Load**, **Notifications & Events**, and **Main Menu**). Includes toast notifications, submenu **Back** history, tooltips, and `Escape` close/cancel with focus restoration.
 
 ### 10. Local Persistence & Offline Catch-Up
-- **Auto & Manual Saves**: Saves automatically to `localStorage` every 5 seconds and whenever you hide or leave the tab. Manual **Save now**, **Reload village**, and **New village** controls live in **Pause → Save & Load**.
+- **Auto & Manual Saves**: The active slot saves to browser storage every 5 seconds and whenever you hide or leave the tab. Use **Pause → Save & Load** to save manually or manage the three island slots.
 - **Bounded Offline Simulation**: When returning to an unpaused village, simulation catches up in `0.25s` increments for up to **90 real seconds** to prevent unexpected starvation or losses. Pausing before leaving freezes the village completely.
 
 ### 11. Developer Debug Mode

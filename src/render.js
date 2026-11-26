@@ -141,7 +141,8 @@ export function createRenderer(canvas, world, camera, view) {
     if (!options) return asset.id;
     const cfg = options.config;
     const cfgKey = cfg
-      ? `${cfg.seed ?? ''}_${cfg.lifeStage ?? ''}_${cfg.heldObject ?? ''}_${cfg.expression ?? ''}_${cfg.accessories ? cfg.accessories.join(',') : ''}`
+      ? [cfg.seed, cfg.lifeStage, cfg.heldObject, cfg.expression, cfg.bodyStyle, cfg.skinTone,
+        cfg.hairStyle, cfg.hairColor, cfg.clothingStyle, cfg.primaryColor, cfg.secondaryColor, cfg.accessories?.join(',')].join('|')
       : '';
     return `${asset.id}|${cfgKey}|${options.direction ?? ''}|${options.animation ?? ''}|${options.frame ?? ''}|${options.shadow ?? ''}|${options.rank ?? ''}|${options.golden ? 'gold' : ''}`;
   }

@@ -285,3 +285,44 @@ This document records Naufy’s Island Colony changes from the first playable vi
 1. Unlock Fishing, then look for small fish and ripples near the shoreline.
 2. Drop an eligible villager on the ripples and check that the Fish preview and fishing task work.
 3. Use the Fishing guide to jump to the shore and check that the water cue identifies the tile.
+
+---
+
+## Patch 16 — Name Your Island and Create Its First Two Villagers
+
+**Files**
+
+`src/island-setup.js`, `src/main-menu.js`, `src/main.js`, `src/save.js`, `src/render.js`, `src/ui.js`, `game.css`, `README.md`, `tests/features.test.js`
+
+### Summary
+
+- Added an island setup screen where players name the island and customize exactly two adult villagers before starting.
+- Added live pixel-art previews and controls for each villager’s name, body, skin tone, hair style and color, clothing, outfit colors, and accessory.
+- Save slots and Continue display the island name. The starting villagers and their appearances are stored with the island.
+- Confirming an overwrite opens setup. The previous save stays in the slot until the player starts the new island.
+
+### What to check
+
+1. Start an island in an empty slot. Name the island and both villagers, then change one villager’s hair or outfit and check the live preview.
+2. Start the island and confirm the customized pair is the entire starting roster.
+3. Return to the Main Menu and check the island name on Continue and its slot. Reload and confirm the same pair returns.
+4. Confirm an overwrite, then back out of setup. Load the slot and check that the original island is still there.
+
+---
+
+## Patch 17 — Centered Villager Customization
+
+**Files**
+
+`src/main-menu.js`, `src/island-setup.js`, `src/ui.js`, `game.css`, `tests/features.test.js`
+
+### Summary
+
+- Centered island setup over the live island and styled the two portrait cards with Island Colony’s existing parchment colors and wood borders.
+- Labeled the first founder Female Villager and the second Male Villager. Each founder’s label stays with their profile after starting and reloading the island.
+
+### What to check
+
+1. Open **Islands → Start New Island**. Check that the panel is centered and both portraits have clear labels.
+2. Try a narrow window and check that the cards stack and can be scrolled.
+3. Start the island and select each founder to check the profile label.

@@ -119,7 +119,9 @@ export function createIslandSaves(storage, world) {
   function list() {
     return islandSlots.map(id => {
       const save = read(id);
-      return { id, name: `Island ${id}`, day: save?.state.time.day, villagers: save?.state.villagers.length, savedAt: save?.savedAt };
+      const name = save?.state.world.name;
+      return { id, name: typeof name === 'string' && name.trim() ? name : `Island ${id}`,
+        day: save?.state.time.day, villagers: save?.state.villagers.length, savedAt: save?.savedAt };
     });
   }
 

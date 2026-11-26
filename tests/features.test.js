@@ -22,6 +22,7 @@ import { createClimate, sampleWeather, WEATHER_CONFIG } from '../src/climate.js'
 import { runDevAction } from '../src/dev-tools.js';
 import { createIslandSaves, loadUnlocks, readVillage, restoreVillage, saveUnlocks, saveVillage, WIPE_STORAGE_KEYS, wipeAllGameData } from '../src/save.js';
 import { loadPreferences, storePreferences } from '../src/preferences.js';
+import { createIslandDraft, createStartingIsland } from '../src/island-setup.js';
 import { buildEventSequence, FEATURE_GUIDES, getActiveChapter, getSurvivalStage, STORY_CHAPTERS, STORY_CONFIG } from '../src/story.js';
 
 const { uiCss: _uiCss, ...modules } = await readStudioModules();
@@ -38,6 +39,42 @@ function browserStorage() {
     removeItem: key => values.delete(key),
   };
 }
+
+test('new island setup saves the island name and exactly two customized adult villagers', () => {
+  const world = createWorld(assets);
+  const saves = createIslandSaves(browserStorage(), world);
+  const draft = createIslandDraft(world.state, 2);
+  assert.equal(draft.name, 'Island 2');
+  assert.equal(draft.villagers.length, 2);
+  assert.deepEqual(draft.villagers.map(v => v.sex), ['female', 'male']);
+  draft.name = '  Bay of Stars  ';
+  Object.assign(draft.villagers[0], { name: '  Rani  ', hairStyle: 'braid', primaryColor: '#1a7d61', accessory: 'hat' });
+  Object.assign(draft.villagers[1], { name: 'Bima', skinTone: 'skin_06', clothingStyle: 'wrap', accessory: '' });
+  const state = createStartingIsland(world.state, draft);
+  assert.equal(state.world.name, 'Bay of Stars');
+  assert.equal(state.world.populationCapacity, world.state.world.populationCapacity);
+  assert.deepEqual(state.villagers.map(v => [v.name, v.lifeStage]), [['Rani', 'adult'], ['Bima', 'adult']]);
+  assert.deepEqual(state.villagers.map(v => v.sex), ['female', 'male']);
+  assert.equal(state.villagers[0].appearance.hairStyle, 'braid');
+  assert.equal(state.villagers[0].appearance.primaryColor, '#1a7d61');
+  assert.deepEqual(state.villagers[0].appearance.accessories, ['hat']);
+  assert.deepEqual(state.villagers[1].appearance.accessories, []);
+  assert.notDeepEqual(state.villagers[0].tile, state.villagers[1].tile);
+  assert.equal(world.state.villagers.length, 5);
+  assert.equal(world.state.villagers[0].name, 'Luna');
+  assert.ok(saves.write(2, state, 200));
+  assert.equal(saves.recent().name, 'Bay of Stars');
+  assert.equal(saves.recent().villagers, 2);
+  const restored = createWorld(assets);
+  assert.ok(restoreVillage(restored, saves.read(2)));
+  assert.deepEqual(restored.state.villagers, state.villagers);
+
+  draft.villagers[0].name = '   ';
+  assert.equal(createStartingIsland(world.state, draft), null);
+  draft.villagers[0].name = 'Rani';
+  draft.villagers[0].hairStyle = 'invalid';
+  assert.equal(createStartingIsland(world.state, draft), null);
+});
 
 test('island slots migrate the old village, rank by save time, and isolate their data', () => {
   const storage = browserStorage();

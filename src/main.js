@@ -17,6 +17,7 @@ import { landmarks } from './progression.js';
 import { advanceOffline, createIslandSaves, loadUnlocks, restoreVillage, saveUnlocks, wipeAllGameData } from './save.js';
 import { runDevAction } from './dev-tools.js';
 import { createMainMenu } from './main-menu.js';
+import { createIslandDraft, createStartingIsland } from './island-setup.js';
 import { createMenuSounds, loadPreferences, storePreferences } from './preferences.js';
 import { lerp, smooth } from './climate.js';
 import { buildEventSequence, ensureStoryState, getActiveChapter, STORY_CONFIG } from './story.js';
@@ -169,29 +170,13 @@ function wipeAllAndRestart({ enterFresh = false } = {}) {
   touchPointers.clear();
   pinchState = null;
   hiddenAt = null;
-  if (enterFresh) {
-    const freshSave = { state: structuredClone(pristine), savedAt: Date.now() };
-    activeSlot = 1;
-    saves.write(1, freshSave.state, freshSave.savedAt);
-    replaceIsland(freshSave);
-    title.hidden = true;
-    title.inert = true;
-    setMode('playing');
-    resetCamera();
-    ui.refreshStatus();
-    ui.refreshQuestTracker();
-    ui.syncDevLock();
-    const story = ensureStoryState(world.state);
-    story.seenEvents.intro_arrival = true;
-    triggerStory('intro_arrival');
-    saveActive();
-    ui.notify('All saved data wiped. Started a fresh island!');
-    return;
-  }
   activeSlot = undefined;
+  setMode('menu');
   loadPreview();
   ui.syncDevLock();
+  scenicTime = 0;
   scenicCamera(0);
+  if (enterFresh) menu.show('setup', 1);
 }
 
 const ui = createUI(world, view, {
@@ -224,6 +209,8 @@ const menu = createMainMenu(title, {
   saves, preferences: settings, fullscreenSupported, applyPreference, enter: enterIsland, deleted: loadPreview,
   wipeAll: () => wipeAllAndRestart({ enterFresh: false }),
   sound, icon: assets.ui.GameUI.ic,
+  createDraft: slot => createIslandDraft(pristine, slot),
+  portrait: appearance => svgUrl(assets.villager.svg({ config: { ...appearance, lifeStage: 'adult' } })),
 });
 
 let pendingFindFocus;
@@ -345,18 +332,20 @@ function openTitle(page = 'home') {
   menu.show(page);
 }
 
-function enterIsland(id, fresh, confirmOverwrite = false) {
+function enterIsland(id, draft, confirmOverwrite = false) {
   if (view.mode !== 'menu') return false;
   let save = saves.read(id);
-  if (fresh) {
+  if (draft) {
     if (save && !confirmOverwrite) return false;
-    save = { state: structuredClone(pristine), savedAt: Date.now() };
+    const state = createStartingIsland(pristine, draft);
+    if (!state) return false;
+    save = { state, savedAt: Date.now() };
     if (!saves.write(id, save.state, save.savedAt)) return false;
   }
   if (!save) return false;
   activeSlot = id;
   entry = { save, from: screenToWorld(center(), renderCamera), zoom: renderCamera.zoom,
-    elapsed: 0, duration: reducedMotion.matches ? 0.2 : 1.25, fresh };
+    elapsed: 0, duration: reducedMotion.matches ? 0.2 : 1.25, fresh: Boolean(draft) };
   title.inert = true;
   setMode('entering');
   return true;

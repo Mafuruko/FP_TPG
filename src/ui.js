@@ -384,7 +384,7 @@ export function createUI(world, view, actions) {
         <div class="villager-card-meta">
           <div class="villager-card-head">
             <h3>${escape(selected.name)}</h3>
-            <span class="villager-age-chip">${escape(selected.lifeStage)} · <span id="villager-age">${selected.age}</span></span>
+            <span class="villager-age-chip">${selected.sex === 'female' ? 'Female · ' : selected.sex === 'male' ? 'Male · ' : ''}${escape(selected.lifeStage)} · <span id="villager-age">${selected.age}</span></span>
           </div>
           ${specialTags ? `<div class="villager-special-row">${specialTags}</div>` : ''}
           <p class="villager-task-line" id="villager-task"></p>
@@ -780,7 +780,7 @@ export function createUI(world, view, actions) {
     collection: renderBook, settings: renderSettings, journal: renderJournal,
     guide: renderGuide,
     achievements: renderAchievements,
-    save: () => `<p>The village saves automatically in this browser.</p>
+    save: () => `<p>${escape(state.world.name || 'This island')} saves automatically in this browser.</p>
       ${actions.lastSave?.() ? `<p>Last save: ${escape(new Date(actions.lastSave()).toLocaleString())}</p>` : ''}
       <div class="gu-row">${btn('Save now', { icon: 'save', act: 'save-now' })}
         ${btn('Manage islands', { icon: 'load', v: 's', act: 'islands' })}</div>
