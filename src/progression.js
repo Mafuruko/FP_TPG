@@ -20,8 +20,8 @@ export const landmarks = {
     cost: { wood: 4 }, state: 'lit', art: 'building:campfire_lit', job: 'build',
   },
   unblock_spring: {
-    label: 'Clear the spring', hint: 'Use 5 Stone to stabilize the streambed after lighting the campfire.',
-    cost: { stone: 5 }, flags: ['light_campfire'], state: 'clear', art: 't_w_shallow', job: 'build',
+    label: 'Restore the spring', hint: 'Light the campfire, then bring 5 Stone to brace the spring outlet.',
+    cost: { stone: 5 }, flags: ['light_campfire'], state: 'clear', art: 'spring_clear', job: 'build', dropLabel: 'Restore Spring',
   },
   restore_garden: {
     label: 'Restore the garden', hint: 'Bring 6 Wood and 4 Food after learning Farming.',

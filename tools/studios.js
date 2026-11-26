@@ -21,7 +21,8 @@ const studios = {
     export const effects = [
       ...RIP.map(([x,y]) => ({id:'water_ripple',x:x*TS,y:y*TS})),
       ...WAV.map(([x,y,dx,dy]) => ({id:'shore_waves',x:x*TS+dx,y:y*TS+dy})),
-      {id:'waterfall_flow',x:waterfall.anchor.x-24,y:waterfall.anchor.y-64}
+      {id:'waterfall_flow',x:waterfall.anchor.x-24,y:waterfall.anchor.y-64},
+      ...springEffects.map(effect => ({ ...effect, requiresFlag: springSite.puzzleId }))
     ];
   `],
   character: ['Villager Character Studio.html', '/* ---------- UI ---------- */', `

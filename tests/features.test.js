@@ -203,6 +203,29 @@ test('camera controller pans on touchpad 2-finger scroll and zooms smoothly on p
   assert.ok(maxStep <= 1.2 && maxStep > 1);
 });
 
+test('keyboard camera pan handles both key sets, diagonals, and release without affecting zoom', () => {
+  const camera = { x: 100, y: 100, zoom: 2 };
+  const ctrl = createCameraController(camera);
+  ctrl.panTo({ x: 60, y: 60 }, 3, { x: 400, y: 300 });
+  ctrl.setPanKey('KeyD', true);
+  ctrl.setPanKey('ArrowRight', true);
+  ctrl.update(0.1);
+  assert.deepEqual(camera, { x: 64, y: 100, zoom: 2 });
+  assert.equal(ctrl.isPanning(), false);
+
+  ctrl.setPanKey('KeyD', false);
+  ctrl.setPanKey('KeyW', true);
+  ctrl.update(0.1);
+  assert.ok(Math.abs(camera.x - (64 - 36 / Math.SQRT2)) < 0.00001);
+  assert.ok(Math.abs(camera.y - (100 + 36 / Math.SQRT2)) < 0.00001);
+  ctrl.setPanKey('ArrowRight', false);
+  ctrl.setPanKey('KeyW', false);
+  assert.equal(ctrl.update(0.1), false);
+  ctrl.clearPanKeys();
+  ctrl.setPanKey('KeyS', true, true);
+  assert.equal(ctrl.update(0.1), false);
+});
+
 test('smart tooltips flip above near bottom edge and stay clamped within screen width', () => {
   const viewport = { width: 1000, height: 700 };
   const topButton = { left: 20, top: 10, right: 80, bottom: 40, width: 60, height: 30 };

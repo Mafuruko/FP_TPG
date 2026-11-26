@@ -296,7 +296,10 @@ test('the island journal progression can unlock and complete every landmark', ()
   complete('light_campfire');
   assert.equal(game.assign(kai, { kind: 'object', id: 'campfire_site_001' }), null);
   runUntil(world, () => world.resources.get('knowledge') >= 2);
+  const spring = map.objects.find(object => object.type === 'spring');
+  assert.equal(game.inspectDrop(luna, spring.tile, { kind: 'object', id: spring.id }).label, 'Restore Spring');
   complete('unblock_spring');
+  assert.equal(world.state.objects[spring.id].art, 'spring_clear');
   assert.ok(world.state.crops.length);
   world.resources.add('knowledge', 100);
   assert.equal(game.research('farm'), null);
@@ -323,6 +326,47 @@ test('the island journal progression can unlock and complete every landmark', ()
   complete('open_waterfall_passage');
   complete('restore_monument');
   assert.equal(world.state.achievements.island_restored, true);
+});
+
+test('older islands keep spring progress and bring affected villagers to the new bank', () => {
+  const world = createWorld(assets);
+  const spring = map.objects.find(object => object.type === 'spring');
+  const approach = findRoute(map.collisionGrid, map.villagerSpawns[0], spring.interactionPoints);
+  assert.ok(approach?.path.length <= 35);
+  const splash = assets.effects.find(effect => effect.id === 'spring_outlet' && effect.requiresFlag === spring.puzzleId);
+  const outlet = worldToTile({ x: splash.x + 8, y: splash.y + 8 }, map.meta.tileSize);
+  assert.equal(map.waterBodyGrid[outlet.y][outlet.x], 'lake_001');
+  for (let y = spring.tile.y - spring.footprint.height + 1; y <= spring.tile.y; y++) {
+    for (let x = spring.tile.x; x < spring.tile.x + spring.footprint.width; x++) {
+      assert.notEqual(map.regionGrid[y][x], 'path');
+      assert.equal(map.buildableGrid[y][x], 0);
+      assert.equal(map.farmableGrid[y][x], 0);
+    }
+  }
+  const legacy = structuredClone(world.state);
+  legacy.world.springLayout = 3;
+  const [nearSpring, worker] = legacy.villagers;
+  nearSpring.tile = { ...spring.tile };
+  nearSpring.position = tileToWorld(nearSpring.tile, map.meta.tileSize);
+  worker.tile = { x: 30, y: 49 };
+  worker.position = tileToWorld(worker.tile, map.meta.tileSize);
+  worker.work = { ref: { kind: 'object', id: spring.id }, job: 'build', phase: 'work', remaining: 1 };
+  assert.ok(restoreVillage(world, { state: structuredClone(legacy) }));
+  const game = startGameplay(world);
+  const [moved, reassigned] = world.state.villagers;
+  assert.ok(walkable(world.collision, moved.tile));
+  assert.equal(reassigned.work.phase, 'approach');
+  assert.ok(spring.interactionPoints.some(({ x, y }) => reassigned.route.at(-1).x === x && reassigned.route.at(-1).y === y));
+  assert.equal(game.inspectDrop(moved, spring.tile, { kind: 'object', id: spring.id }).label, undefined);
+
+  legacy.worldFlags.unblock_spring = true;
+  delete legacy.world.springLayout;
+  legacy.objects[spring.id] = { state: 'clear', art: 't_w_shallow', amount: null };
+  legacy.crops = [{ id: 'crop_0', tile: { x: 32, y: 38 }, cropType: 'carrot', stage: 3 }];
+  assert.ok(restoreVillage(world, { state: structuredClone(legacy) }));
+  startGameplay(world);
+  assert.equal(world.state.objects[spring.id].art, 'spring_clear');
+  assert.deepEqual(world.state.crops, legacy.crops);
 });
 
 test('building, families, healing, collectible discovery, and local saves work together', () => {

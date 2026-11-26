@@ -472,6 +472,7 @@ export function createRenderer(canvas, world, camera, view) {
 
   function drawEffects(bounds) {
     for (const effect of assets.effects) {
+      if (effect.requiresFlag && !state.worldFlags[effect.requiresFlag]) continue;
       if (effect.id === 'waterfall_flow' && state.worldFlags.open_waterfall_passage) continue;
       const asset = assets.registry.get(effect.id);
       if (bounds && (effect.x + asset.width < bounds.left || effect.y + asset.height < bounds.top

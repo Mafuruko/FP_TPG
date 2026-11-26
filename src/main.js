@@ -63,6 +63,7 @@ const dropLabel = dropHint.querySelector('span');
 const camera = { x: 0, y: 0, zoom: 2 };
 const renderCamera = { ...camera };
 const cameraController = createCameraController(camera);
+const keyboardControls = 'input, select, textarea, [contenteditable], [role="tablist"], [role="listbox"], [role="slider"]';
 const devOnEntry = new URLSearchParams(location.search).get('debug') === '1';
 const view = {
   selectedVillager: null, selectedObject: null, debug: false, mode: 'menu', settings,
@@ -210,7 +211,10 @@ const storyDirector = createStoryDirector(storyRoot, {
       if (layer !== storyRoot) layer.inert = blocking || view.mode !== 'playing';
     }
     canvas.inert = blocking;
-    if (blocking) clearPointer();
+    if (blocking) {
+      cameraController.clearPanKeys();
+      clearPointer();
+    }
   },
   onComplete: (sequence, reason) => {
     if (sequence.id === 'intro_arrival' && (reason === 'completed' || reason === 'skipped')) {
@@ -321,6 +325,7 @@ function handleGameplayEvent(ev) {
 }
 
 function setMode(next) {
+  cameraController.clearPanKeys();
   view.mode = app.dataset.mode = next;
   for (const layer of hud) layer.inert = next !== 'playing';
   ui.syncMusic();
@@ -493,6 +498,7 @@ window.addEventListener('pagehide', () => { if (hiddenAt === null) saveActive();
 document.addEventListener('visibilitychange', () => {
   if (view.mode !== 'playing') return;
   if (document.hidden) {
+    cameraController.clearPanKeys();
     hiddenAt = Date.now();
     saveActive(hiddenAt);
   } else if (hiddenAt !== null) {
@@ -607,6 +613,7 @@ canvas.addEventListener('wheel', event => {
 
 canvas.addEventListener('pointerdown', event => {
   if (view.mode !== 'playing' || storyDirector.isBlocking()) return;
+  cameraController.clearPanKeys();
   const start = canvasPosition(event);
   if (event.pointerType === 'touch') {
     touchPointers.set(event.pointerId, start);
@@ -700,6 +707,13 @@ window.addEventListener('keydown', event => {
     if (event.key === 'Escape' && view.mode === 'menu') menu.closePanel();
     return;
   }
+  if (!storyDirector.isBlocking() && !pointer && !pinchState
+    && !event.defaultPrevented && !event.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey
+    && !event.target.closest?.(keyboardControls)
+    && cameraController.setPanKey(event.code, true, event.repeat)) {
+    event.preventDefault();
+    return;
+  }
   if (storyDirector.isActive() && (storyDirector.isBlocking() || storyRoot.contains(event.target))) {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -726,6 +740,12 @@ window.addEventListener('keydown', event => {
       view.placement = null;
     } else ui.closeMenu();
   }
+});
+
+window.addEventListener('keyup', event => cameraController.setPanKey(event.code, false));
+window.addEventListener('blur', cameraController.clearPanKeys);
+document.addEventListener('focusin', event => {
+  if (event.target.closest?.(keyboardControls)) cameraController.clearPanKeys();
 });
 
 setMode('menu');

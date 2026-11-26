@@ -1,6 +1,6 @@
 import { describeInteraction } from './assets.js';
 import { sampleWeather } from './climate.js';
-import { findRoute, neighbors, tileToWorld, walkable } from './geometry.js';
+import { findRoute, neighbors, tileToWorld, walkable, worldToTile } from './geometry.js';
 import { emitGroundDust, groundContact, groundPosition, villagerGroundTuning } from './ground.js';
 import { construction, costLabel, landmarks, researchProjects } from './progression.js';
 import { initializeVillagerQuirks, jobSkill, promoteToChampion } from './villagers.js';
@@ -8,6 +8,7 @@ import { moveVillager, previewPlacement } from './world.js';
 import { ensureStoryState, evaluateAchievementsAndChallenges, getSurvivalStage, STORY_CONFIG } from './story.js';
 
 const stages = ['foundation', 'p25', 'p50', 'p75', 'completed'];
+const springLayout = 4;
 const labels = {
   gather: 'Gathering food', chop: 'Cutting wood', mine: 'Gathering stone', build: 'Building',
   research: 'Researching', farm: 'Tending crops', fish: 'Fishing', heal: 'Healing',
@@ -190,7 +191,8 @@ export function startGameplay(world) {
     if (target.puzzleId) {
       const puzzle = landmarks[target.puzzleId];
       if (!state.worldFlags[target.puzzleId]) {
-        return puzzleBlocked(puzzle) ? { error: puzzle.hint } : { job: puzzle.job, points: target.interactionPoints };
+        return puzzleBlocked(puzzle) ? { error: puzzle.hint }
+          : { job: puzzle.job, points: target.interactionPoints, label: puzzle.dropLabel };
       }
       return target.id === camp.id ? { job: 'research', points: camp.interactionPoints } : { error: 'This landmark has been restored.' };
     }
@@ -304,7 +306,8 @@ export function startGameplay(world) {
     if (!closest) return { issue: 'There is no reachable place to put this villager down.' };
     const delivery = villager.work?.phase === 'deliver' && (target.id === camp.id
       || (target.kind === 'building' && target.type === 'food_storage' && target.state === 'completed'));
-    const [label, icon] = delivery ? ['Deliver Supplies', 'icon_done'] : (!issue && dropActions[action.job]) || [];
+    const [defaultLabel, icon] = delivery ? ['Deliver Supplies', 'icon_done'] : (!issue && dropActions[action.job]) || [];
+    const label = defaultLabel && !delivery ? action.label ?? defaultLabel : defaultLabel;
     return { tile: closest, target, action, issue: delivery ? null : issue, delivery, label, icon };
   }
 
@@ -394,6 +397,59 @@ export function startGameplay(world) {
         : `${villager.name} finished: ${puzzle.label}.`);
     emitEvent('landmark', { puzzleId, villager, object: target });
     checkAchievements();
+  }
+
+  function updateSpringLayout() {
+    if (state.world.springLayout === springLayout) return;
+    const spring = map.objects.find(object => object.type === 'spring');
+    const restored = state.worldFlags[spring.puzzleId];
+    const springState = restored ? 'clear' : 'blocked';
+    Object.assign(state.objects[spring.id], { state: springState, art: spring.states[springState] });
+
+    const { tile, footprint } = spring;
+    const covers = point => point.x >= tile.x && point.x < tile.x + footprint.width
+      && point.y <= tile.y && point.y > tile.y - footprint.height;
+    const banks = spring.interactionPoints.filter(point => walkable(world.collision, point));
+    function relocate(entity) {
+      if (!covers(entity.tile) && (!entity.position || !covers(worldToTile(entity.position, tileSize)))) return false;
+      const bank = banks.reduce((nearest, point) =>
+        distance(entity.tile, point) < distance(entity.tile, nearest) ? point : nearest);
+      entity.tile = { x: bank.x, y: bank.y };
+      entity.position = tileToWorld(bank, tileSize);
+      return true;
+    }
+
+    for (const item of [...(state.activeCollectibles ?? []), ...state.graves]) relocate(item);
+    for (const villager of state.villagers) {
+      const relocated = relocate(villager);
+      if (relocated) {
+        villager.previousStep = null;
+        const contact = groundContact(villager);
+        contact.x = contact.y = contact.vx = contact.vy = 0;
+      }
+      const springJob = villager.work?.ref?.id === spring.id;
+      const destination = villager.route.at(-1);
+      if (springJob) {
+        if (!restored && moveVillager(world, villager, banks, spring.id)) {
+          villager.work.phase = 'approach';
+          continue;
+        }
+      } else {
+        if (!destination || (!relocated && !villager.route.some(covers))) continue;
+        const task = villager.currentTask;
+        if (moveVillager(world, villager, [destination], task?.targetId)) {
+          if (villager.currentTask) villager.currentTask.facing = task?.facing ?? null;
+          continue;
+        }
+      }
+      villager.route = [];
+      villager.currentTask = null;
+      villager.work = null;
+      villager.appearance.heldObject = 'none';
+      villager.animation = 'idle';
+      villager.activity = 'Idle';
+    }
+    state.world.springLayout = springLayout;
   }
 
   function build(target) {
@@ -1221,6 +1277,7 @@ export function startGameplay(world) {
     },
   };
   refreshCollision();
+  updateSpringLayout();
   world.gameplay = gameplay;
   return gameplay;
 }

@@ -503,3 +503,83 @@ This document records Naufy’s Island Colony changes from the first playable vi
 1. Use **Fit to map** in the camera toolbar or zoom out with the mouse wheel. Watch the clouds and their shadows drift across the island.
 2. Zoom back in and check that the cloud bodies fade while the shadows remain visible.
 3. Compare clear weather with heavy rain and look for the change in cloud cover.
+
+---
+
+## Patch 27 — WASD and Arrow-Key Camera Controls
+
+**Files**
+
+`index.html`, `src/camera-controls.js`, `src/main.js`, `tests/features.test.js`
+
+### Summary
+
+- Added continuous camera panning while holding WASD or the arrow keys. Diagonal movement uses the same speed as straight movement.
+- Keyboard panning takes over from an automatic camera pan and stops on key release or when the game loses focus. Story scenes and focused form controls keep their keyboard behavior.
+- Added the keys to the in-game control hint.
+
+### What to check
+
+1. Hold each direction with WASD and with the arrow keys. Try moving diagonally and release to stop.
+2. Use a volume slider with the arrow keys and check that the camera stays put.
+3. Switch away from the game while holding a movement key and check that the camera stops.
+
+---
+
+## Patch 28 — Freshwater Spring Restoration
+
+**Files**
+
+`assets/Island Map Studio (1).html`, `tools/studios.js`, `src/render.js`, `src/gameplay.js`, `src/progression.js`, `src/story.js`, `tests/foundation.test.js`
+
+### Summary
+
+- Moved the freshwater spring to the south bank of the lake, directly above the cropland. Its new pixel art shows mossy rock, a seep, a catch pool, and a debris-blocked outlet.
+- Restoring it with 5 Stone clears the outlet, adds stone braces, and starts animated water flowing into the field. The journal and drop preview point to the new restoration site.
+- Existing saves keep their spring and crop progress. Villagers caught in the new footprint move to a walkable bank, and active spring workers approach the new site.
+
+### What to check
+
+1. Light the campfire, gather 5 Stone, and use the Guide to find the spring between the lake and fields.
+2. Drag an adult onto the blocked spring. Check for the **Restore Spring** prompt, then watch for flowing water and crop plots after the job finishes.
+3. Load an older island with a restored spring. Check that the new spring is flowing and that crop growth stages carry over.
+
+---
+
+## Patch 29 — Spring in the Southern Woods
+
+**Files**
+
+`assets/Island Map Studio (1).html`, `tools/studios.js`, `src/gameplay.js`, `src/story.js`, `tests/foundation.test.js`
+
+### Summary
+
+- Tucked the spring into a gap among the trees southeast of camp. The canopy frames the pool, and villagers can approach through the open ground along the woodland edge.
+- Pointed the Guide at the exposed center of the spring and updated Auron’s directions to the woods.
+- Existing saves carry their restoration progress to the new site, including spring work that was underway at the lakeshore.
+
+### What to check
+
+1. Follow the southern path from camp and look through the trees to the east for the spring.
+2. Gather 5 Stone and use **Show Me** in the spring chapter of the Guide. Drop an adult on the visible rock and check that they can reach the bank and restore it.
+3. Load an island with the lakeside spring already restored and check that it flows in the woodland spot.
+
+---
+
+## Patch 30 — Spring Feeds the Central Pond
+
+**Files**
+
+`assets/Island Map Studio (1).html`, `tools/studios.js`, `src/gameplay.js`, `src/story.js`, `tests/foundation.test.js`
+
+### Summary
+
+- Moved the spring to the north bank of the central pond. Its restored outlet now flows across the shoreline and into the pond.
+- Set out dry approaches and updated the Guide. Adults can still restore it with 5 Stone after lighting the campfire, and the restored spring still opens the farming progression.
+- Kept the existing fishing spots and crop plots in place. Saved restoration progress and assigned spring workers carry over.
+
+### What to check
+
+1. Head around the west side of the central pond and find the spring just off the north-bank path.
+2. Drop an adult onto the blocked spring with 5 Stone. Look for the stream and ripples where the outlet enters the pond.
+3. Load a save with the spring already restored and check that the flow and farm progress carry over.

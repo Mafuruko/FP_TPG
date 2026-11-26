@@ -152,12 +152,65 @@ if(!done){B(10,30,5,3,MO);B(54,36,5,4,MO);B(30,28,6,2,MO);L(52,34,52,56,'#5f9a58
 const ruin=()=>Sp(32,32,(P,B,R)=>{R(2,18,10,12,RK[1]);R(2,18,10,2,RK[0]);R(14,10,5,20,RK[1]);R(14,10,5,2,RK[0]);R(21,22,9,8,RK[1]);R(21,22,9,2,RK[0]);B(7,19,4,2,MO);P(16,16,'#6fe0d0');R(24,26,3,1,RK[2])});A('ruins','Landmarks',ruin(),[2,2]);
 const gard=s=>Sp(64,48,(P,B,R)=>{R(2,6,60,40,'#6a4c30');R(2,6,60,3,RK[0]);R(2,43,60,3,RK[1]);R(2,6,3,40,RK[1]);R(59,6,3,40,RK[1]);const r=sr(9);for(let i=0;i<(s===0?10:s===1?14:40);i++){const x=7+r()*48|0,y=12+r()*26|0;if(s===0){R(x,y,1,4,'#8a7a50');P(x+1,y,'#a89868')}else{const f=i<(s===1?5:40);R(x,y+2,1,3,'#4a7d48');f?(R(x-1,y,3,2,FC[i%6]),P(x,y,'#f2d95a')):(R(x,y,1,4,'#8a7a50'))}}});
 ['abandoned','partial','restored'].forEach((k,i)=>A('garden_'+k,'Landmarks',gard(i),[4,3]));
-A('campfire_site','Landmarks',Sp(16,16,(P,B,R)=>{[[3,9],[7,10],[11,9],[2,5],[12,5],[5,3],[9,3]].forEach(([x,y])=>R(x,y,3,2,RK[1]));R(6,6,4,3,'#4a3220')}));A('spring_blocked','Landmarks',Sp(16,16,(P,B,R)=>{R(3,7,10,6,'#4a90b4');R(2,4,6,4,RK[1]);R(8,3,6,5,RK[2]);R(5,10,6,4,RK[1]);P(4,9,'#8cc8dc')}));
+A('campfire_site','Landmarks',Sp(16,16,(P,B,R)=>{[[3,9],[7,10],[11,9],[2,5],[12,5],[5,3],[9,3]].forEach(([x,y])=>R(x,y,3,2,RK[1]));R(6,6,4,3,'#4a3220')}));
+const springBank=['#a7aa88','#85846c','#656953'];
+const springWater=['#76c6c7','#56a9b5','#397f92'];
+const spring=(open)=>Sp(48,46,(P,B,R,L)=>{
+  // An uneven basin below a limestone seep, with a narrow outlet into the pond.
+  B(24,30,23,13,['#a1a57d','#8c8967','#767355']);
+  B(12,32,10,7,['#a6a381','#8c8967','#766e55']);
+  B(35,32,11,8,['#a6a381','#8c8967','#766e55']);
+  L(21,34,18,40,'#66634e',8);L(19,40,16,44,'#66634e',5);
+  if(open){
+    B(23,29,17,9,springWater);B(32,28,10,6,springWater);B(17,32,10,6,springWater);
+    L(22,32,19,39,'#55acb7',5);L(20,39,17,45,'#55acb7',3);
+    L(22,35,19,43,'#90d6d5');
+    R(28,32,7,1,'#80cbd0');R(9,30,4,1,'#a0d9d7');P(34,29,'#a0d9d7');
+    // Fitted stones brace the sides of the restored outlet.
+    B(17,37,3,2,RK);B(26,36,3,2,RK);B(15,41,2.4,2,RK);B(23,40,2.6,2,RK);
+  }else{
+    B(22,29,15,8,['#879986','#6d8175','#596b61']);
+    R(10,30,5,1,'#9caf93');R(32,29,5,1,'#9caf93');
+    B(21,33,6,5,RK);B(26,32,5,4,springBank);B(17,37,4,3,springBank);
+    L(15,34,28,38,'#63492f');L(20,32,25,41,'#816140',2);
+    P(22,39,'#b6a482');R(30,34,3,1,'#a19b7c');
+  }
+  // The broad rock shoulders frame the actual seep.
+  B(12,16,9,9,springBank);B(20,11,10,8,RK);
+  B(30,10,9,8,springBank);B(38,17,8,8,RK);
+  B(17,19,8,8,springBank);B(35,18,8,7,springBank);
+  R(22,13,7,9,'#4e5548');R(25,12,3,1,'#656953');
+  if(open){
+    R(24,15,4,11,'#65b8bb');R(24,16,1,8,'#b2e3df');R(26,20,2,6,'#8acecb');
+    B(25,27,5,2,['#ccf1e4','#9bdcda','#6ab9bd']);
+  }else{
+    R(26,19,1,6,'#8eb9a9');P(25,25,'#b7cfb5');
+    B(24,18,5,4,RK);B(29,21,4,4,springBank);
+  }
+  [[10,11],[18,6],[31,6],[40,16],[6,24],[41,32],[11,37]].forEach(([x,y],i)=>{
+    B(x,y,3+i%2,2,MO);P(x-1,y,'#adc982');
+  });
+  for(const [x,y] of [[5,28],[8,26],[39,34],[42,31]]){
+    L(x,y,x-2,y-4,'#527744');L(x,y,x+1,y-5,'#8aa65c');
+  }
+},0);
+A('spring_blocked','Landmarks',spring(false),[3,2]);
+A('spring_clear','Landmarks',spring(true),[3,2]);
 /* ---------- animations (discrete frames) ---------- */
 const shift=(sp,dx)=>{const m=new Map();sp.m.forEach((c,k)=>{const x=k%sp.w,y=(k/sp.w)|0,X=y<sp.h*.55?x+dx:x;if(X>=0&&X<sp.w)m.set(y*sp.w+X,c)});return{w:sp.w,h:sp.h,m}};
 const ANIMS={water_ripple:{fps:4,n:4,mk:i=>Sp(16,16,P=>{const r=i+1,c=i<3?'#e8f6fa':'#a9d6e2';for(let a=-r;a<=r;a++){P(8+a,8-((r+1)>>1),c);P(8+a,8+((r+1)>>1),c)}},0)},
 shore_waves:{fps:4,n:4,mk:i=>Sp(16,8,P=>{for(let x=0;x<16;x++){if((x+i*2)%6<3)P(x,2+(i%2),'#fff');if((x+i*2+3)%7<2)P(x,5,'#cfe8f0')}},0)},
 waterfall_flow:{fps:5,n:4,mk:i=>wfall(i,0)},waterfall_foam:{fps:4,n:3,mk:i=>Sp(48,8,(P,B)=>B(24,4,14+i,3,['#fff','#e6f4f8','#cfe8f0']),0)},
+spring_flow:{fps:5,n:4,mk:i=>Sp(48,46,(P,B,R)=>{
+  R(25,16+i*2,1,3,'#dcf5ea');R(26,18+i,1,2,'#9bdcda');
+  R(23-i,27+i,5+i*2,1,i<2?'#c5ede3':'#92d2d1');P(30+i,29+i,'#b1e2dd');
+  P(21-i,36+i*2,'#b1e2dd');
+},0)},
+spring_outlet:{fps:4,n:4,mk:i=>Sp(16,12,(P,B,R)=>{
+  R(8,0,3,5,'#55acb7');R(7,3,5,2,'#6ab9bd');R(9,1+i%2,1,3,'#b2e3df');
+  R(7-i,5+i,4+i*2,1,i<2?'#bce7e1':'#91cbd4');
+  P(6-i,4+i,'#91cbd4');P(11+i,4+i,'#91cbd4');
+},0)},
 flower_sway:{fps:3,n:2,mk:i=>shift(AS.flower_2,i)},tall_grass_sway:{fps:3,n:2,mk:i=>shift(AS.tall_grass_2,i)},leaf_rustle:{fps:3,n:3,mk:i=>shift(AS.tree_1,[0,1,-1][i])},bush_rustle:{fps:5,n:3,mk:i=>shift(AS.berry_bush_full,[0,1,-1][i])},
 crop_growth:{fps:2,n:4,mk:i=>AS['crop_tomato_'+i]},monument_glow:{fps:4,n:4,mk:i=>mon(5,i*1.6)}};
 Object.entries(ANIMS).forEach(([k,a])=>{a.frames=[];for(let i=0;i<a.n;i++){const s=a.mk(i);a.w=s.w;a.h=s.h;A(`anim_${k}_${i}`,'Animations',s);a.frames.push(`anim_${k}_${i}`)}});
@@ -176,7 +229,6 @@ addO('cave_entrance','cave_locked',17,24,{id:'cave_entrance_001',layer:'landmark
 addO('waterfall','waterfall_locked',39,14,{id:'waterfall_001',layer:'landmarks',fw:3,fh:4,state:'locked',states:{locked:'waterfall_locked',unlocked:'waterfall_unlocked'},extra:{inspectionPosition:{x:37,y:16,facing:'right'},blockedEntrance:{x:37,y:14},puzzleInteraction:{x:37,y:15,facing:'up'},puzzleId:'open_waterfall_passage'}});
 addO('ruins','ruins',57,18,{id:'stone_ruins_001',layer:'landmarks',fw:2,fh:2});
 addO('campfire_site','campfire_site',24,41,{id:'campfire_site_001',layer:'landmarks',state:'unlit',extra:{puzzleId:'light_campfire'}});
-addO('spring','spring_blocked',27,31,{id:'spring_blocked_001',layer:'landmarks',state:'blocked',extra:{puzzleId:'unblock_spring'}});
 let BR={};(function(){let a=99,b=0;for(const x of[57,58])for(let y=0;y<MH;y++)if(WB[y][x]==='river_001'){a=Math.min(a,y);b=Math.max(b,y)}BR={x:57,y0:a-1,y1:b+1,n:b-a+3}})();
 A('bridge_broken','Landmarks',brg(BR.n,0),[2,BR.n]);A('bridge_partial','Landmarks',brg(BR.n,1),[2,BR.n]);A('bridge_repaired','Landmarks',brg(BR.n,2),[2,BR.n]);
 addO('bridge','bridge_broken',BR.x,BR.y1,{id:'broken_bridge_001',layer:'landmarks',fw:2,fh:BR.n,block:false,bb:true,state:'broken',states:{broken:'bridge_broken',partial:'bridge_partial',repaired:'bridge_repaired'},extra:{puzzleId:'repair_bridge'}});
@@ -202,6 +254,14 @@ if(t==='sand'&&r==='beach'&&!RS[y][x]){if(h<.03)dec('seashell','shell_'+(1+Math.
 if(t==='sand'&&r==='lake_shore'&&h<.12)dec('small_stone','stone_small',x,y)});
 each((x,y)=>{if(!isW(x,y)||!['lake_001','river_001'].includes(WB[y][x])||T[y][x]!=='shallow_water')return;const n=[[1,0],[-1,0],[0,1],[0,-1]].some(([a,b])=>inb(x+a,y+b)&&!isW(x+a,y+b)&&T[y+b][x+a]!=='cliff');if(n&&HH(x,y,29)<.2)dec('reeds','reeds',x,y);else if(WB[y][x]==='lake_001'&&HH(x,y,30)<.05)dec('water_lily','water_lily',x,y)});
 /* ---------- collision, interaction points, zones ---------- */
+// Keep the spring on the dry north bank, with the outlet touching the pond.
+const springSite=addO('spring','spring_blocked',36,26,{id:'spring_blocked_001',layer:'landmarks',fw:3,fh:2,state:'blocked',
+  states:{blocked:'spring_blocked',clear:'spring_clear'},extra:{puzzleId:'unblock_spring'}});
+springSite.puzzleFocus={x:springSite.anchor.x,y:springSite.anchor.y-23};
+const springEffects=[
+  {id:'spring_flow',x:springSite.anchor.x-springSite.sprite.width/2,y:springSite.anchor.y-springSite.sprite.height},
+  {id:'spring_outlet',x:springSite.anchor.x-16,y:springSite.anchor.y-1},
+];
 const COL=[];each((x,y)=>{(COL[y]=COL[y]||[])[x]=(!TERRAIN_TYPES[T[y][x]].walkable||OCC[y][x])?1:0});
 const SPAWN=[[22,43],[23,44],[24,44],[25,44],[26,43]];SPAWN.forEach(([x,y])=>COL[y][x]=0);
 const brFp=()=>fpt(OBJS.find(o=>o.type==='bridge'));
@@ -211,15 +271,28 @@ function getInteractionPoints(o){if(!o.blocksMovement)return[{x:o.tile.x,y:o.til
 OBJS.forEach(o=>{o.interactionPoints=getInteractionPoints(o)});
 OBJS.find(o=>o.type==='bridge').interactionPoints=[{x:BR.x,y:BR.y1+1,facing:'up'}];OBJS.find(o=>o.type==='cave_entrance').interactionPoints=[{x:19,y:25,facing:'up'}];
 const fixO=(id,pts)=>{OBJS.find(o=>o.id===id).interactionPoints=pts};fixO('waterfall_001',[{x:37,y:15,facing:'up'}]);fixO('flower_garden_001',[{x:49,y:42,facing:'right'},{x:54,y:42,facing:'left'}]);
+fixO('spring_blocked_001',[{x:35,y:26,facing:'right'},{x:37,y:24,facing:'down'},{x:39,y:26,facing:'left'}]);
 const sortO=()=>OBJS.sort((a,b)=>a.sortY-b.sortY||a.tile.x-b.tile.x);sortO();
 const pre=bfs(SPAWN,colFor()),post=bfs(SPAWN,colFor({bridge:2}));
 const tilesWhere=f=>{const r=[];each((x,y)=>{if(f(x,y))r.push([x,y])});return r},ok=(x,y)=>!COL[y][x]&&RG[y][x]!=='ocean'&&post[y*MW+x];
 const nearWater=(x,y,wb,d)=>{for(let j=-d;j<=d;j++)for(let i=-d;i<=d;i++)if(inb(x+i,y+j)&&WB[y+j][x+i]===wb&&isW(x+i,y+j))return 1;return 0};
 const inNE=(x,y)=>x>=43&&y<rivY(x)-1.8&&y>=15&&T[y][x]!=='cliff'&&!isW(x,y);
 const WATER_BODIES=[{id:'ocean_001',type:'ocean',fishable:true},{id:'lake_001',type:'lake',fishable:true,center:{x:36,y:31}},{id:'river_001',type:'river',fishable:true,flow:'from waterfall pool (40,18) east to ocean (72,29)'},{id:'pool_001',type:'pool',fishable:false,note:'waterfall pool'}];
-const FISH=(()=>{const dirs=[[1,0,'right'],[-1,0,'left'],[0,1,'down'],[0,-1,'up']],out=[];
-[['lake_001',6,[36,31],'lake'],['river_001',4,[55,24],'river'],['ocean_001',4,[40,35],'ocean']].forEach(([wb,n,c,nm])=>{const cand=[],seenS=new Set();each((x,y)=>{if(WB[y][x]!==wb||!isW(x,y)||(wb==='ocean_001'&&T[y][x]!=='shallow_water'))return;dirs.forEach(([a,b,f])=>{const sx=x-a,sy=y-b;if(inb(sx,sy)&&!COL[sy][sx]&&post[sy*MW+sx]&&RG[sy][sx]!=='cliff'&&T[sy][sx]!=='rock'&&!seenS.has(sx+','+sy)){seenS.add(sx+','+sy);cand.push({sx,sy,x,y,f,a:Math.atan2(sy-c[1],sx-c[0])})}})});
-cand.sort((p,q)=>p.a-q.a);for(let i=0;i<n&&cand.length;i++){const k=cand[Math.floor(i*cand.length/n)];out.push({id:`${nm}_fishing_${String(i+1).padStart(3,'0')}`,type:'fishing_spot',waterBodyId:wb,waterTarget:{x:k.x,y:k.y},standPosition:{x:k.sx,y:k.sy},facing:k.f,interaction:'fish',resourceType:'food',requires:['fishing_unlocked'].concat(i>=4&&nm==='lake'?['fishing_level_2']:[]).concat(pre[k.sy*MW+k.sx]?[]:['bridge_repaired']),enabledByDefault:false})}});return out})();
+const FISH=(()=>{
+  const dirs=[[1,0,'right'],[-1,0,'left'],[0,1,'down'],[0,-1,'up']];
+  const spot=(wb,nm,{sx,sy,x,y,f},i)=>({
+    id:`${nm}_fishing_${String(i+1).padStart(3,'0')}`,type:'fishing_spot',waterBodyId:wb,
+    waterTarget:{x,y},standPosition:{x:sx,y:sy},facing:f,interaction:'fish',resourceType:'food',
+    requires:['fishing_unlocked'].concat(i>=4&&nm==='lake'?['fishing_level_2']:[]).concat(pre[sy*MW+sx]?[]:['bridge_repaired']),
+    enabledByDefault:false,
+  });
+  // Keep the pond's fishing IDs tied to their original banks as the shoreline changes.
+  const lakeBanks=[[30,30,31,30],[34,26,34,27],[39,27,38,27],[42,32,41,32],[38,36,38,35],[33,35,33,34]];
+  const out=lakeBanks.map(([sx,sy,x,y],i)=>spot('lake_001','lake',{sx,sy,x,y,f:dirs.find(([a,b])=>a===x-sx&&b===y-sy)[2]},i));
+  [['river_001',4,[55,24],'river'],['ocean_001',4,[40,35],'ocean']].forEach(([wb,n,c,nm])=>{const cand=[],seenS=new Set();each((x,y)=>{if(WB[y][x]!==wb||!isW(x,y)||(wb==='ocean_001'&&T[y][x]!=='shallow_water'))return;dirs.forEach(([a,b,f])=>{const sx=x-a,sy=y-b;if(inb(sx,sy)&&!COL[sy][sx]&&post[sy*MW+sx]&&RG[sy][sx]!=='cliff'&&T[sy][sx]!=='rock'&&!seenS.has(sx+','+sy)){seenS.add(sx+','+sy);cand.push({sx,sy,x,y,f,a:Math.atan2(sy-c[1],sx-c[0])})}})});
+  cand.sort((p,q)=>p.a-q.a);for(let i=0;i<n&&cand.length;i++)out.push(spot(wb,nm,cand[Math.floor(i*cand.length/n)],i))});
+  return out;
+})();
 const villageTiles=tilesWhere((x,y)=>EL(23,41,9.5,6.5,x,y)<1&&['grass','dirt'].includes(T[y][x])&&!COL[y][x]&&!PATH.has(x+','+y)&&RG[y][x]!=='campfire_core'&&RG[y][x]!=='farmland');
 const BZ=[{id:'village_zone_001',type:'building_zone',allowedBuildingTypes:['house','family_house','food_storage','research_hut','crafting_hut','healing_hut','school','collection_hut'],tiles:villageTiles},
 {id:'campfire_zone_001',type:'building_zone',allowedBuildingTypes:['campfire'],tiles:tilesWhere((x,y)=>RG[y][x]==='campfire_core'&&!COL[y][x])},
@@ -233,7 +306,7 @@ sz('beach_shells_001',['seashell','starfish'],(x,y)=>RG[y][x]==='beach'&&ND(x,y)
 sz('forest_mushrooms_001',['red_mushroom','brown_mushroom'],(x,y)=>RG[y][x]==='forest'),sz('rare_flowers_001',['rare_flower'],(x,y)=>RG[y][x]==='meadow'&&HH(x,y,40)<.25,{requires:'botany_unlocked'}),
 sz('cave_minerals_001',['crystal','clay'],(x,y)=>RG[y][x]==='rocky'),sz('ancient_artifacts_001',['ancient_pottery','stone_tablet','ancient_fragment'],(x,y)=>inNE(x,y),{timeOfDay:['day','night'],weather:['any'],requires:'bridge_repaired'})];
 const P_=(id,name,obj,req,unlocks,extra)=>Object.assign({id:'puzzle_'+id,type:'puzzle',puzzleId:id,name,objectId:obj,state:'locked',interactionPoints:OBJS.find(o=>o.id===obj).interactionPoints,requires:req,unlocks},extra||{});
-const PUZ=[P_('light_campfire','Starting campfire','campfire_site_001',['wood'],'village_hub'),P_('unblock_spring','Blocked freshwater spring','spring_blocked_001',['stone','research_level_1'],'freshwater_spring'),
+const PUZ=[P_('light_campfire','Starting campfire','campfire_site_001',['wood'],'village_hub'),P_('unblock_spring','Blocked freshwater spring','spring_blocked_001',['stone','light_campfire'],'freshwater_spring'),
 P_('repair_bridge','Broken bridge','broken_bridge_001',['construction_level_2','rope','wood'],'eastern_region',{assetId:'bridge_broken',states:{locked:{assetId:'bridge_broken',walkableOverride:false},restored:{assetId:'bridge_repaired',walkableOverride:true}},footprintTiles:brFp()}),
 P_('restore_garden','Abandoned flower garden','flower_garden_001',['seeds','research_level_2'],'restored_garden'),P_('light_cave','Dark cave','cave_entrance_001',['torch','research_level_3'],'cave_interior',{entranceTile:{x:18,y:23}}),
 P_('open_waterfall_passage','Hidden waterfall entrance','waterfall_001',['ancient_fragment'],'waterfall_passage',{blockedEntrance:{x:37,y:14}}),P_('restore_monument','Ancient monument','ancient_monument_001',['fragment_1','fragment_2','fragment_3','fragment_4'],'game_victory',{fragmentSlots:4,dependsOn:['repair_bridge']})];
@@ -243,7 +316,8 @@ const BG=[],FG=[];each((x,y)=>{(BG[y]=BG[y]||[])[x]=0;(FG[y]=FG[y]||[])[x]=0});B
 const FR={sand:'#e8d9a8',dirt:'#b08d60',fertile_soil:'#7a5a3a',grass:'#5f8250',rock:'#9a9488',cliff:'#7d7468'},PR={deep_water:0,shallow_water:1,sand:2,dirt:3,fertile_soil:3,grass:4,rock:5,cliff:6};
 function symMap(id){if(id.startsWith('t_'))return{m:TL[id.slice(2)],w:16,h:16};if(id.endsWith('__top')){const a=AS[id.slice(2,-5)],m=new Map();a.m.forEach((c,k)=>{if(k<a.w*(a.h-14))m.set(k,c)});return{m,w:a.w,h:a.h}}const a=AS[id.slice(2)];return{m:a.m,w:a.w,h:a.h}}
 const EFX={};let EFXON=true;
-function effectsStr(f,U){let s='';const an=k=>ANIMS[k].frames[f%ANIMS[k].n];RIP.forEach(([x,y])=>s+=`<use href="${U('a_'+an('water_ripple'))}" x="${x*16}" y="${y*16}"/>`);WAV.forEach(([x,y,dx,dy])=>s+=`<use href="${U('a_'+an('shore_waves'))}" x="${x*16+dx}" y="${y*16+dy}"/>`);
+function effectsStr(f,U,ov){let s='';const an=k=>ANIMS[k].frames[f%ANIMS[k].n];RIP.forEach(([x,y])=>s+=`<use href="${U('a_'+an('water_ripple'))}" x="${x*16}" y="${y*16}"/>`);WAV.forEach(([x,y,dx,dy])=>s+=`<use href="${U('a_'+an('shore_waves'))}" x="${x*16+dx}" y="${y*16+dy}"/>`);
+if(ov[springSite.id]==='clear')for(const {id,x,y} of springEffects)s+=`<use href="${U('a_'+an(id))}" x="${x}" y="${y}"/>`;
 const wf=OBJS.find(o=>o.type==='waterfall');s+=`<use href="${U('a_'+an('waterfall_flow'))}" x="${wf.anchor.x-24}" y="${wf.anchor.y-64}"/>`;return s}
 const RIP=tilesWhere((x,y)=>isW(x,y)&&WB[y][x]!=='ocean_001'?HH(x,y,50)<.1:T[y][x]==='shallow_water'&&HH(x,y,51)<.05),WAV=[];each((x,y)=>{if(T[y][x]==='shallow_water'&&WB[y][x]==='ocean_001'){[[1,0,8,0],[-1,0,-8,0],[0,1,0,8],[0,-1,0,-8]].forEach(([a,b,dx,dy])=>{if(inb(x+a,y+b)&&T[y+b][x+a]==='sand'&&HH(x,y,52)<.35&&dy===0)WAV.push([x,y,0,5])})}});
 function assetOf(o,st,ov){const k=ov[o.id];if(k&&o.states&&o.states[k])return o.states[k];if(o.type==='bridge')return['bridge_broken','bridge_partial','bridge_repaired'][st.bridge];if(o.type==='garden')return['garden_abandoned','garden_partial','garden_restored'][st.garden];if(o.type==='monument')return'monument_'+['inactive','fragments_1','fragments_2','fragments_3','fragments_4','restored'][st.mon];return o.assetId}
@@ -254,7 +328,7 @@ const t=T[y][x],p=PR[t];[[1,0,'r'],[-1,0,'l'],[0,1,'d'],[0,-1,'u']].forEach(([a,
 if(T[y][x]==='shallow_water'&&WB[y][x]==='ocean_001')[[1,0],[-1,0],[0,1],[0,-1]].forEach(([a,b])=>{if(inb(x+a,y+b)&&T[y+b][x+a]==='sand'&&HH(x,y,9)<.8)add('water-details',b?`<path fill="#fff" d="M${x*16+2+HH(x,y,3)*4|0} ${y*16+(b>0?12:3)}h4v1h-4zM${x*16+9} ${y*16+(b>0?13:2)}h3v1h-3z"/>`:`<path fill="#fff" d="M${x*16+(a>0?12:3)} ${y*16+3}h1v4h-1zM${x*16+(a>0?13:2)} ${y*16+10}h1v3h-1z"/>`)})});
 if(st.farm){const rows={};FZ[0].tiles.forEach(([x,y])=>{const k=Object.keys(CROP)[(y*7+x)%5],stg=Math.min(3,Math.max(0,x-29>>1));if(HH(x,y,60)<.8&&(y%2===0))add('paths-and-farmland',`<use href="${U(`a_crop_${k}_${st.farm===2?3:stg}`)}" x="${x*16}" y="${y*16}"/>`)})}
 for(const ob of OBJS){const as=assetOf(ob,st,ov),a=AS[as],x=ob.anchor.x-a.w/2,y=ob.anchor.y-a.h,g=ob.layer;add(g,`<g id="${ob.id}" data-object-type="${ob.type}" data-asset="${as}" class="${ob.cls}${/tree|palm|bush/.test(ob.type)?' veg':''}"><use href="${U('a_'+as)}" x="${x}" y="${y}"/></g>`);if(ob.canopy)add('foreground-canopies',`<use href="${U('a_'+as+'__top')}" x="${x}" y="${y}" data-for="${ob.id}"/>`)}
-if(!o.noFx&&EFXON){for(let f=0;f<4;f++)EFX[f]=effectsStr(f,U);G['environment-effects']=EFX[0]}
+if(!o.noFx&&EFXON){for(let f=0;f<4;f++)EFX[f]=effectsStr(f,U,ov);G['environment-effects']=EFX[0]}
 const defs=[...used].map(id=>{const s=symMap(id);return`<g id="${id}">${runs(s.m,s.w,s.h)}</g>`}).join('');
 const order=['ocean-background','terrain-base','terrain-transitions','water-details','ground-decoration','paths-and-farmland','resource-objects','landmarks','foreground-canopies','environment-effects'];
 const body=order.map(g=>(!only||only.includes(g))?`<g id="${g}">${G[g]||''}</g>`:'').join(''),z=o.s||1;

@@ -8,11 +8,18 @@ export const CAMERA_CONFIG = {
   pinchWheelSensitivity: 0.0062,
   maxWheelZoomFactor: 1.18,
   panSpeed: 1.0,
+  keyboardPanPixelsPerSecond: 360,
   smoothRate: 14,
   snapEpsilon: 0.0008,
   mouseNotchMinDelta: 80,
   defaultPanDuration: 1.0,
 };
+
+const leftKeys = ['KeyA', 'ArrowLeft'];
+const rightKeys = ['KeyD', 'ArrowRight'];
+const upKeys = ['KeyW', 'ArrowUp'];
+const downKeys = ['KeyS', 'ArrowDown'];
+const panKeys = new Set([...leftKeys, ...rightKeys, ...upKeys, ...downKeys]);
 
 export function clampZoom(zoom, config = CAMERA_CONFIG) {
   return Math.max(config.minZoom, Math.min(config.maxZoom, zoom));
@@ -80,12 +87,14 @@ export function zoomCameraAt(camera, screen, nextZoom, config = CAMERA_CONFIG) {
 /**
  * Creates a smooth camera motion controller supporting:
  * - Touchpad 2-finger pan
+ * - Held WASD and arrow keys
  * - Touchpad pinch/spread and Ctrl+wheel smooth zoom
  * - Standard mouse wheel smooth zoom
  * - HUD zoom buttons with smooth interpolation
  * - Two-finger touchscreen pinch & pan
  */
 export function createCameraController(camera, config = CAMERA_CONFIG) {
+  const heldKeys = new Set();
   const state = {
     targetZoom: camera.zoom,
     anchor: null,
@@ -112,6 +121,24 @@ export function createCameraController(camera, config = CAMERA_CONFIG) {
     state.pan = null;
     camera.x += dx * config.panSpeed;
     camera.y += dy * config.panSpeed;
+  }
+
+  function setPanKey(code, pressed, repeat = false) {
+    if (!panKeys.has(code)) return false;
+    if (!pressed) heldKeys.delete(code);
+    else if (!repeat) heldKeys.add(code);
+    return true;
+  }
+
+  function updateKeyboardPan(dt) {
+    if (!heldKeys.size) return false;
+    const isHeld = codes => Number(codes.some(code => heldKeys.has(code)));
+    const x = isHeld(leftKeys) - isHeld(rightKeys);
+    const y = isHeld(upKeys) - isHeld(downKeys);
+    if (!x && !y) return false;
+    const distance = config.keyboardPanPixelsPerSecond * dt / Math.hypot(x, y);
+    panBy(x * distance, y * distance);
+    return true;
   }
 
   function panTo(worldPos, targetZoom, screenCenter, options = {}) {
@@ -186,6 +213,7 @@ export function createCameraController(camera, config = CAMERA_CONFIG) {
 
   function update(dt) {
     if (dt <= 0) return false;
+    const keyboardMoved = updateKeyboardPan(dt);
     if (state.pan) {
       const p = state.pan;
       p.elapsed += dt;
@@ -207,7 +235,7 @@ export function createCameraController(camera, config = CAMERA_CONFIG) {
       }
       return true;
     }
-    if (!state.active || !state.anchor) return false;
+    if (!state.active || !state.anchor) return keyboardMoved;
     const diff = state.targetZoom - camera.zoom;
     if (Math.abs(diff) <= config.snapEpsilon) {
       zoomCameraAt(camera, state.anchor, state.targetZoom, config);
@@ -232,6 +260,8 @@ export function createCameraController(camera, config = CAMERA_CONFIG) {
     stepButtonZoom,
     handleWheel,
     handleTouchPinch,
+    setPanKey,
+    clearPanKeys: () => heldKeys.clear(),
     update,
   };
 }

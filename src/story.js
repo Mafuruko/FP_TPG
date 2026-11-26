@@ -133,7 +133,8 @@ export function landmarkObject(world, puzzleId) {
 export function landmarkAnchor(world, puzzleId) {
   const obj = landmarkObject(world, puzzleId);
   if (!obj) return tileToWorld(world.map.villagerSpawns[2], world.map.meta.tileSize);
-  return obj.anchor ? { x: obj.anchor.x, y: obj.anchor.y } : tileToWorld(obj.tile, world.map.meta.tileSize);
+  const point = obj.puzzleFocus ?? obj.anchor;
+  return point ? { x: point.x, y: point.y } : tileToWorld(obj.tile, world.map.meta.tileSize);
 }
 
 export function findNearestResource(world, counter, type) {
@@ -216,13 +217,13 @@ export const STORY_CHAPTERS = [
   {
     id: 'ch2_spring',
     number: 2,
-    title: 'Unblock the Spring',
-    shortTitle: 'Clear the Freshwater Spring',
+    title: 'Restore the Spring',
+    shortTitle: 'Restore the Freshwater Spring',
     icon: 'build',
     guideId: 'resources',
     landmarkId: 'unblock_spring',
-    summary: 'Mine 5 Stone and clear the blocked spring north of camp.',
-    howTo: 'Drag an adult onto rocks (5 Stone), then drop them on the blocked spring.',
+    summary: 'Bring 5 Stone to the spring on the north bank of the central pond.',
+    howTo: 'Mine 5 Stone, then drop an adult on the spring to clear debris and brace the outlet.',
     isComplete: ({ state }) => Boolean(state.worldFlags.unblock_spring),
     steps: ({ state }) => [
       { label: 'Stone', done: state.resources.stone >= 5 || Boolean(state.worldFlags.unblock_spring), progress: `${Math.min(5, state.resources.stone)}/5` },
@@ -233,7 +234,7 @@ export const STORY_CHAPTERS = [
         const rock = findNearestResource(world, 'stone');
         if (rock) return { position: rock.position, zoom: 2.45, label: 'Mine Rocks (5 Stone)', kind: 'object', id: rock.object.id, dragFrom: 'adult' };
       }
-      return { position: landmarkAnchor(world, 'unblock_spring'), zoom: 2.5, label: 'Clear Spring (5 Stone)', kind: 'landmark', id: 'unblock_spring', dragFrom: 'adult' };
+      return { position: landmarkAnchor(world, 'unblock_spring'), zoom: 2.5, label: 'Restore Spring (5 Stone)', kind: 'landmark', id: 'unblock_spring', dragFrom: 'adult' };
     },
   },
   {
@@ -803,9 +804,9 @@ export const FEATURE_GUIDES = [
     id: 'farming',
     title: 'Freshwater Spring & Crops',
     icon: 'hunger',
-    summary: 'Clearing the spring unlocks 8 renewable farm plots.',
+    summary: 'Restoring the spring gives the village fresh water for its crop plots.',
     steps: [
-      'Clear the blocked spring with 5 Stone to irrigate the valley.',
+      'Bring 5 Stone to the spring on the north bank of the pond to rebuild the outlet.',
       'Unlock Farming (12 Knowledge) and drop adults onto green sprouts.',
       'Crops grow from stage 0 to 3 and harvest big Food hauls.',
     ],
@@ -879,12 +880,12 @@ const NEXT_LANDMARK_REVEALS = {
     doneTitle: 'Campfire Lit!',
     doneText: 'Drop an adult on the fire anytime to earn Knowledge.',
     nextLandmarkId: 'unblock_spring',
-    nextTitle: 'Next: Clear the Blocked Spring',
-    nextText: 'Mine 5 Stone from rocks, then drop an adult here.',
+    nextTitle: 'Next: Restore the Spring',
+    nextText: 'Mine 5 Stone. Look for a rocky seep on the north bank of the pond.',
   },
   unblock_spring: {
-    doneTitle: 'Freshwater Spring Cleared!',
-    doneText: '8 fertile crop plots just sprouted beside the water.',
+    doneTitle: 'Freshwater Spring Restored!',
+    doneText: 'Clear water is feeding the pond again. The village can use it to tend the fields.',
     nextLandmarkId: 'restore_garden',
     nextTitle: 'Next: Revive the Overgrown Garden',
     nextText: 'Earn 10+ Knowledge (Healing & Farming), then bring 6 Wood & 4 Food here.',
