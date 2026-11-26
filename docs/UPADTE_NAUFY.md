@@ -228,3 +228,60 @@ This document records Naufy’s Island Colony changes from the first playable vi
 2. Create islands in two slots, then return through the pause menu. Check the day and villager count on each slot and verify that Continue opens the most recent one.
 3. Cancel an overwrite and confirm the island is still there. Try deleting a test island and check that the slot becomes empty.
 4. Change the volume or display settings, reload, and verify that the settings carry across islands.
+
+---
+
+## Patch 13 — Collectible Pickup and Rarity Reveal
+
+**Files**
+
+`assets/Villager Character Studio.html`, `src/assets.js`, `src/gameplay.js`, `src/render.js`, `src/main.js`, `src/story.js`, `tests/foundation.test.js`
+
+### Summary
+
+- Villagers reach for a collectible or catch a butterfly, then lift it overhead with a surprised expression.
+- The raised item displays its rarity sparkle and label. Repeat finds get the same reveal and still count in the Collection Book.
+- The camera eases toward the finder and leaves manual camera controls available. The first-find guide appears after the reveal.
+
+### What to check
+
+1. Drop an eligible villager on a collectible. Watch for the grab before it leaves the ground.
+2. Check that the finder holds the item overhead and that its rarity matches the Collection Book.
+3. Collect a repeat find and confirm that the reveal still plays. Pan the camera manually during a reveal to interrupt the automatic pan.
+
+---
+
+## Patch 14 — Butterfly Collectible Hover
+
+**Files**
+
+`src/render.js`, `tests/foundation.test.js`
+
+### Summary
+
+- Collectible butterflies make a small, pixel-snapped loop around their spawn point, alternating wingbeats with a gentle glide.
+- The catch area covers the butterfly’s moving sprite and its spawn point, so villagers can catch it without chasing it.
+
+### What to check
+
+1. Watch a butterfly for a few seconds. Its wings should alternate between fluttering and gliding while it stays near the same spot.
+2. Drop a villager on the butterfly during its glide. Confirm the catch and rarity reveal play as usual.
+
+---
+
+## Patch 15 — Natural Fishing Cues
+
+**Files**
+
+`src/render.js`, `src/story.js`, `src/story-ui.js`, `src/main.js`, `src/ui.js`, `README.md`, `tests/features.test.js`
+
+### Summary
+
+- Replaced fishing arrows with small fish silhouettes and expanding pixel ripples on the water.
+- Fishing guides pan to the rippling water and explain where to drop a villager.
+
+### What to check
+
+1. Unlock Fishing, then look for small fish and ripples near the shoreline.
+2. Drop an eligible villager on the ripples and check that the Fish preview and fishing task work.
+3. Use the Fishing guide to jump to the shore and check that the water cue identifies the tile.

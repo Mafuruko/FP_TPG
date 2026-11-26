@@ -27,6 +27,10 @@ export function createStoryDirector(root, { world, view, icon, panTo, onAction, 
     const targetPos = follow ? follow.position : beat.focus;
     if (targetPos) {
       panTo(targetPos, beat.zoom || STORY_CONFIG.defaultSpotlightZoom, { duration });
+      if (beat.cue === 'water') {
+        view.storyBeacon = null;
+        return;
+      }
       view.storyBeacon = {
         position: { x: targetPos.x, y: targetPos.y },
         followVillagerId: beat.followVillagerId || null,

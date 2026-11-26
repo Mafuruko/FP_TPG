@@ -110,7 +110,8 @@ export function createAssets(studios) {
   }
 
   return {
-    registry, buildings, collectibles, resourceItems, resourceSources: resource.SRC, animals, villager, terrain, ui, uiAssets,
+    registry, buildings, collectibles, collectibleRarities: collectible.RARITY_DEFINITIONS,
+    resourceItems, resourceSources: resource.SRC, animals, villager, terrain, ui, uiAssets,
     effects: island.effects, canopySvg: island.canopySvg, validation: island.validation,
     generateVillager: character.generateRandomCharacter, characterAnimations: character.animsFor,
     characterFps: character.fps,

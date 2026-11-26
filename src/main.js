@@ -129,7 +129,8 @@ function panToTarget(position, targetZoom = STORY_CONFIG.defaultSpotlightZoom, l
   if (!position) return;
   const duration = options.duration ?? (reducedMotion.matches ? STORY_CONFIG.reducedPanDurationSec : STORY_CONFIG.panDurationSec);
   cameraController.panTo(position, targetZoom, center(), { duration, immediate: options.immediate });
-  if (label !== null) {
+  if (options.cue === 'water') view.storyBeacon = null;
+  else if (label !== null) {
     view.storyBeacon = {
       position: { x: position.x, y: position.y },
       label: label || '',
@@ -146,6 +147,7 @@ function panToObjective() {
   if (!target?.position) return;
   panToTarget(target.position, target.zoom || STORY_CONFIG.defaultSpotlightZoom, target.label || chapter.shortTitle, 'gold', {
     dragFrom: target.dragFrom || null,
+    cue: target.cue,
   });
 }
 
@@ -224,6 +226,26 @@ const menu = createMainMenu(title, {
   sound, icon: assets.ui.GameUI.ic,
 });
 
+let pendingFindFocus;
+let pendingFirstFind;
+
+function updateFindPresentation() {
+  if (pointer || pinchState || view.placementType) return;
+  if (pendingFindFocus && !storyDirector.isActive()) {
+    const { villagerId, position } = pendingFindFocus;
+    if (world.collectibleReveals.has(villagerId)) {
+      panToTarget({ x: position.x, y: position.y - 18 }, Math.max(camera.zoom, 1.8), null, 'gold', {
+        duration: reducedMotion.matches ? STORY_CONFIG.reducedPanDurationSec : 0.72,
+      });
+    }
+    pendingFindFocus = null;
+  }
+  if (pendingFirstFind && !world.collectibleReveals.has(pendingFirstFind.villagerId)) {
+    triggerStory('first_collectible', pendingFirstFind);
+    pendingFirstFind = null;
+  }
+}
+
 function handleGameplayEvent(ev) {
   if (view.mode !== 'playing') return;
   const story = ensureStoryState(world.state);
@@ -256,9 +278,12 @@ function handleGameplayEvent(ev) {
       story.seenEvents[key] = true;
       triggerStory('feature_research', ev);
     }
-  } else if (ev.type === 'collectible' && ev.firstEver && !story.seenEvents.first_collectible) {
-    story.seenEvents.first_collectible = true;
-    triggerStory('first_collectible', ev);
+  } else if (ev.type === 'collectible') {
+    pendingFindFocus = ev;
+    if (ev.firstEver && !story.seenEvents.first_collectible) {
+      story.seenEvents.first_collectible = true;
+      pendingFirstFind = ev;
+    }
   } else if (ev.type === 'achievement') {
     sound('test');
     if (ev.achievement?.id === 'challenge_flawless_century') {
@@ -283,6 +308,7 @@ function saveActive(now = Date.now()) {
 }
 
 function replaceIsland(save) {
+  pendingFindFocus = pendingFirstFind = null;
   view.selectedVillager = view.selectedObject = view.placementType = view.placement = view.storyBeacon = null;
   view.overlays.clear();
   storyDirector.reset();
@@ -716,6 +742,7 @@ function frame(now) {
   wildlifeDirector.setView(cameraWorldRect(renderCamera, canvas.clientWidth, canvas.clientHeight));
   if (view.mode === 'menu') updateIslandPreview(world, dt);
   else if (view.mode === 'playing') updateWorld(world, dt);
+  if (view.mode === 'playing') updateFindPresentation();
   if (view.drag) {
     updateDragPosition();
     if (now - lastPreview >= 55) {

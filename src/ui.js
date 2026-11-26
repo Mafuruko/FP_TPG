@@ -1167,7 +1167,7 @@ export function createUI(world, view, actions) {
       renderMenu();
     } else if (act === 'guide-locate') {
       const target = FEATURE_GUIDE_MAP[arg]?.resolveTarget?.(world);
-      if (target) actions.panToTarget?.(target.position, target.zoom || 2.5, target.label, 'gold');
+      if (target) actions.panToTarget?.(target.position, target.zoom || 2.5, target.label, 'gold', { cue: target.cue });
       else notify('No active map target for this guide yet.');
     } else if (act === 'replay-intro') {
       closeMenu();

@@ -5,6 +5,7 @@ import { findRoute, screenToWorld, tileToWorld, walkable, worldToScreen, worldTo
 import { approachObject, createResourceManager, createWorld, habitatAllows, moveVillager, previewPlacement, updateWorld } from '../src/world.js';
 import { readStudioModules } from '../tools/studios.js';
 import { musicTrack } from '../src/ui.js';
+import { butterflyHover } from '../src/render.js';
 import { BirdState, birdAnimations, birdTuning, birdVisuals } from '../src/birds.js';
 import { FishState, fishTuning, fishVisuals, launchFish, waterAt } from '../src/fish.js';
 import { DolphinState, dolphinVisuals } from '../src/dolphin.js';
@@ -328,6 +329,53 @@ test('building, families, healing, collectible discovery, and local saves work t
   assert.equal(advanceOffline(loaded, 1000, 400000), 90);
   loaded.state.time.paused = true;
   assert.equal(advanceOffline(loaded, 1000, 400000), 0);
+});
+
+test('collecting stages the grab and reveal, including repeat finds', () => {
+  const world = createWorld(assets);
+  const game = startGameplay(world);
+  const [villager] = world.state.villagers;
+  const asset = assets.collectibles.find(item => item.category === 'seashell' && item.rarity === 'rare');
+  const events = [];
+  game.subscribeEvents(event => { if (event.type === 'collectible') events.push(event); });
+  world.state.time.speed = 3;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const find = { id: 'test-find', assetId: asset.id, tile: villager.tile, position: { ...villager.position } };
+    world.state.activeCollectibles.push(find);
+    assert.equal(game.drop(villager, villager.tile, { kind: 'collectible', id: find.id }), null);
+    assert.equal(villager.animation, 'collectGrab');
+    updateWorld(world, 0.2);
+    assert.ok(world.state.activeCollectibles.includes(find));
+    runUntil(world, () => world.collectibleReveals.has(villager.id), 2);
+    assert.ok(!world.state.activeCollectibles.includes(find));
+    assert.equal(world.state.collectionProgress[asset.id].discoveryCount, attempt);
+    assert.equal(events.at(-1).villagerId, villager.id);
+    assert.equal(events.at(-1).firstEver, attempt === 1);
+    assert.equal(world.collectibleReveals.get(villager.id).assetId, asset.id);
+    updateWorld(world, 0.8);
+    assert.equal(villager.activity, `Showing ${asset.name}`);
+    runUntil(world, () => !world.collectibleReveals.has(villager.id), 2);
+  }
+  assert.equal(events.length, 2);
+});
+
+test('collectible butterflies flap and glide in a small pixel-snapped area around their spawn', () => {
+  const tile = map.villagerSpawns[0];
+  const entity = { tile, position: tileToWorld(tile, map.meta.tileSize) };
+  const { flap } = assets.collectibles.find(item => item.category === 'butterfly').animations;
+  const samples = Array.from({ length: 180 }, (_, i) => butterflyHover(entity, i / 30, flap));
+  const horizontal = new Set();
+  for (const { position, frame } of samples) {
+    assert.ok(Number.isInteger(position.x) && Number.isInteger(position.y));
+    assert.ok(Math.abs(position.x - entity.position.x) <= 6);
+    assert.ok(Math.abs(position.y - entity.position.y) <= 5);
+    assert.ok(frame >= 0 && frame < flap.frameCount);
+    horizontal.add(position.x);
+  }
+  assert.ok(horizontal.size >= 8);
+  assert.ok(samples.some(sample => sample.frame === 2));
+  assert.ok(samples.filter(sample => sample.frame === 0).length > samples.length / 2);
+  assert.deepEqual(entity.position, tileToWorld(tile, map.meta.tileSize));
 });
 
 test('music follows the menu, weather and island clock', () => {

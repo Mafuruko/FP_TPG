@@ -170,7 +170,7 @@ export function findFarmAnchor(world) {
 export function findFishingAnchor(world) {
   const spot = world.map.fishingSpots.find(s => !s.requires.includes('bridge_repaired') || world.state.worldFlags.repair_bridge)
     || world.map.fishingSpots[0];
-  return spot ? tileToWorld(spot.standPosition, world.map.meta.tileSize) : landmarkAnchor(world, 'restore_garden');
+  return spot ? tileToWorld(spot.waterTarget, world.map.meta.tileSize) : landmarkAnchor(world, 'restore_garden');
 }
 
 export function findBestDragOrigin(world, fromKind = 'adult', excludeId = null) {
@@ -331,8 +331,8 @@ export const STORY_CHAPTERS = [
     icon: 'discovery',
     guideId: 'fishing',
     landmarkId: null,
-    summary: 'Unlock Fishing (18 Knowledge) and fish at shoreline markers.',
-    howTo: 'Learn Fishing in Research, then drop a villager on the lake markers.',
+    summary: 'Unlock Fishing (18 Knowledge) and look for ripples near shore.',
+    howTo: 'Learn Fishing in Research, then drop a villager on the rippling water.',
     isComplete: ({ state }) => Boolean(state.abilities.fish),
     steps: ({ state }) => [
       { label: 'Knowledge', done: state.resources.knowledge >= 18 || Boolean(state.abilities.fish), progress: `${Math.min(18, state.resources.knowledge)}/18` },
@@ -342,6 +342,7 @@ export const STORY_CHAPTERS = [
       position: findFishingAnchor(world),
       zoom: 2.45,
       label: 'Lake Fishing Shore',
+      cue: 'water',
       kind: 'zone',
       id: 'lake_fishing_001',
     }),
@@ -816,11 +817,11 @@ export const FEATURE_GUIDES = [
     summary: 'Restore the garden, unlock Fishing, and fish along the lake edge.',
     steps: [
       'Restore the Flower Garden to draw fish back to shore.',
-      'Learn Fishing (18 Knowledge) so blue markers appear on the water.',
-      'Drop any child, adult, or elder onto a shallow marker to start fishing.',
+      'Learn Fishing (18 Knowledge) and look for fish rippling the water near shore.',
+      'Drop a child, adult, or elder on the ripples to start fishing.',
     ],
     actionHint: 'Repair the eastern bridge for deeper coastal fishing spots.',
-    resolveTarget: world => ({ position: findFishingAnchor(world), zoom: 2.5, label: 'Lake Fishing Shore' }),
+    resolveTarget: world => ({ position: findFishingAnchor(world), zoom: 2.5, label: 'Lake Fishing Shore', cue: 'water' }),
   },
   {
     id: 'collection',
@@ -938,9 +939,9 @@ const RESEARCH_GUIDE_BEATS = {
   },
   fish: {
     title: 'Fishing Unlocked',
-    text: 'Drop any villager on the blue wave markers by the lake.',
+    text: 'Look for small fish and ripples by the shore. Drop a villager onto the rippling water to start fishing.',
     icon: 'discovery',
-    dragFrom: 'any',
+    cue: 'water',
   },
   advanced_construction: {
     title: 'Advanced Construction Unlocked',
@@ -1197,6 +1198,7 @@ export function buildEventSequence(eventId, payload, world) {
             zoom: 2.5,
             beaconLabel: info.title.replace(' Unlocked', ''),
             dragFrom: info.dragFrom,
+            cue: info.cue,
           },
         ],
       };
@@ -1214,8 +1216,6 @@ export function buildEventSequence(eventId, payload, world) {
             title: `Found: ${name}`,
             icon: 'discovery',
             text: 'Logged in your Collection Book! 24 more rare finds await across the island.',
-            focus: payload?.position || villagePos,
-            zoom: 2.6,
             action: { label: 'Collection Book', type: 'open-menu', arg: 'collection' },
           },
         ],

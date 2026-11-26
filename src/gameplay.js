@@ -31,6 +31,7 @@ const dropActions = {
 export function startGameplay(world) {
   const { state, map, assets, resources } = world;
   const { tileSize } = map.meta;
+  const reveals = world.collectibleReveals = new Map();
   const listeners = new Set();
   const eventListeners = new Set();
   const camp = map.objects.find(object => object.type === 'campfire_site');
@@ -174,9 +175,10 @@ export function startGameplay(world) {
     }
     if (kind === 'collectible') {
       const asset = assets.registry.get(target.assetId);
-      if (!asset.interaction.eligibleLifeStages.includes(villager.lifeStage)) return 'Choose a villager of a different age for this find.';
+      if (!asset.interaction.eligibleLifeStages.includes(villager.lifeStage)) return { error: 'Choose a villager of a different age for this find.' };
       const points = mapFacingTile(target.tile);
-      return { job: 'collect', points, animation: asset.category === 'butterfly' ? 'catch' : 'gather' };
+      const grab = assets.villager.animations.collectGrab ? 'collectGrab' : 'gather';
+      return { job: 'collect', points, animation: asset.category === 'butterfly' ? 'catch' : grab };
     }
     if (kind === 'building') {
       const points = buildingPoints(target);
@@ -229,6 +231,7 @@ export function startGameplay(world) {
   }
 
   function setAssignment(villager, target, ref, action, remember) {
+    reveals.delete(villager.id);
     endConversation(villager);
     villager.appearance.heldObject = 'none';
     villager.retryAt = 0;
@@ -260,6 +263,7 @@ export function startGameplay(world) {
   }
 
   function land(villager, tile) {
+    reveals.delete(villager.id);
     endConversation(villager);
     delete villager.holdStillUntil;
     villager.tile = { x: tile.x, y: tile.y };
@@ -324,6 +328,7 @@ export function startGameplay(world) {
   }
 
   function stop(villager) {
+    reveals.delete(villager.id);
     endConversation(villager);
     villager.work = null;
     villager.preferredJob = null;
@@ -437,20 +442,25 @@ export function startGameplay(world) {
     spawnChild(villager, partner);
   }
 
-  function collect(target) {
+  function collect(villager, target) {
     const index = state.activeCollectibles.findIndex(item => item.id === target.id);
     if (index < 0) return;
     state.activeCollectibles.splice(index, 1);
     const entry = state.collectionProgress[target.assetId];
     entry.discoveryCount++;
-    if (!entry.discovered) {
+    const firstDiscovery = !entry.discovered;
+    if (firstDiscovery) {
       entry.discovered = true;
       entry.firstDiscoveredAt = state.time.day;
-      const discoveredCount = Object.values(state.collectionProgress).filter(item => item.discovered).length;
-      announce(`Discovered ${assets.registry.get(target.assetId).name}.`);
-      emitEvent('collectible', { assetId: target.assetId, position: target.position, firstEver: discoveredCount === 1 });
-      checkAchievements();
     }
+    const firstEver = firstDiscovery && Object.values(state.collectionProgress).filter(item => item.discovered).length === 1;
+    const asset = assets.registry.get(target.assetId);
+    villager.activity = `Showing ${asset.name}`;
+    villager.animation = 'idle';
+    reveals.set(villager.id, { assetId: asset.id, age: 0, duration: 1.9 });
+    if (firstDiscovery) announce(`Discovered ${asset.name}.`);
+    emitEvent('collectible', { assetId: asset.id, villagerId: villager.id, position: villager.position, firstEver });
+    if (firstDiscovery) checkAchievements();
   }
 
   function deliveryPoints() {
@@ -496,7 +506,7 @@ export function startGameplay(world) {
         announce(`${villager.name} laid island blossoms at ${grave.name}'s memorial.`);
       }
     } else if (job === 'family') haveChild(villager, target);
-    else if (job === 'collect') collect(target);
+    else if (job === 'collect') collect(villager, target);
     else if (job === 'farm' && target.stage < 3) {
       state.crops.find(crop => crop.id === target.id).stage++;
     } else if (work.counter || job === 'farm') {
@@ -573,11 +583,18 @@ export function startGameplay(world) {
   function beginWork(villager) {
     const { work } = villager;
     work.phase = 'work';
-    work.remaining = work.job === 'mourn'
+    work.remaining = work.job === 'collect' ? 0.62 * (state.time.speed || 1) : work.job === 'mourn'
       ? STORY_CONFIG.mournWorkSec
       : 3.2 * (jobSkill(villager, work.job)?.rank.workTime ?? 1);
     villager.activity = labels[work.job];
     villager.animation = work.animation || jobAnimations[work.job] || work.job;
+    if (work.job === 'collect') {
+      const target = getTarget(work.ref);
+      const dx = target.position.x - villager.position.x;
+      const dy = target.position.y - villager.position.y;
+      villager.direction = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'back' : 'front');
+      work.grabDuration = work.remaining;
+    }
   }
 
   const sources = new Map();
@@ -782,10 +799,12 @@ export function startGameplay(world) {
 
   function advanceVillager(villager, elapsed) {
     if (world.heldVillager === villager.id) {
+      reveals.delete(villager.id);
       delete villager.holdStillUntil;
       endConversation(villager);
       return;
     }
+    if (reveals.has(villager.id)) return;
     if (villager.holdStillUntil !== undefined) {
       if (state.time.seconds < villager.holdStillUntil) {
         villager.route = [];
@@ -1018,6 +1037,14 @@ export function startGameplay(world) {
   }
 
   function advance(elapsed) {
+    for (const [id, reveal] of reveals) {
+      reveal.age += elapsed / (state.time.speed || 1);
+      if (reveal.age >= reveal.duration || !state.villagers.some(villager => villager.id === id)) {
+        reveals.delete(id);
+        const villager = state.villagers.find(member => member.id === id);
+        if (villager) villager.activity = 'Idle';
+      }
+    }
     const now = state.time.seconds;
     const rain = sampleWeather(state.weather, now).rain;
     const stage = getSurvivalStage(world);

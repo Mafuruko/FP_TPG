@@ -48,7 +48,7 @@ Built with vanilla ES modules, Canvas 2D, procedural SVG studio assets, and a ze
   |---|---|---|---|
   | **Healing** | 10 Knowledge | None | Allows villagers to care for sick/injured neighbors. |
   | **Farming** | 12 Knowledge | Clear the spring | Unlocks tending and harvesting the 8 spring crop plots (`carrot`, `corn`, `potato`, `cabbage`, `tomato`; harvests `7 Food` at stage 3) and restoring the garden. |
-  | **Fishing** | 18 Knowledge | Restore the garden | Reveals marked fishing spots across 14 river/coastal locations (deep spots require `Fishing` skill `≥ 3` or the repaired bridge). |
+  | **Fishing** | 18 Knowledge | Restore the garden | Look for small fish and ripples at river and coastal fishing spots. Some spots require Fishing skill level 3 or the repaired bridge. |
   | **Advanced construction** | 24 Knowledge | None | Enables repairing the eastern bridge. |
   | **Ancient knowledge** | 28 Knowledge | Investigate the cave | Unlocks reading the waterfall marks and restoring the ancient monument. |
 

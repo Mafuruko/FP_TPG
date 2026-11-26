@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createAssets } from '../src/assets.js';
+import { tileToWorld } from '../src/geometry.js';
 import { readStudioModules } from '../tools/studios.js';
 import { createWorld, updateIslandPreview, updateWorld } from '../src/world.js';
 import { startGameplay } from '../src/gameplay.js';
@@ -363,6 +364,12 @@ test('guided story chapters swap vivid shortTitles, omit speaker labels, and sup
   const reveal = buildEventSequence('landmark_reveal', { puzzleId: 'light_campfire' }, world);
   assert.equal(reveal.beats.length, 2);
   assert.match(reveal.beats[1].title, /Spring/);
+
+  const fishing = buildEventSequence('feature_research', { abilityId: 'fish' }, world).beats[0];
+  assert.equal(fishing.cue, 'water');
+  assert.match(fishing.text, /ripples/);
+  const spot = world.map.fishingSpots.find(item => !item.requires.includes('bridge_repaired'));
+  assert.deepEqual(fishing.focus, tileToWorld(spot.waterTarget, world.map.meta.tileSize));
 });
 
 test('camera controller smoothly pans to a world target and cancels on manual input', () => {

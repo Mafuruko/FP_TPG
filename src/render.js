@@ -9,6 +9,7 @@ import { turtleVisuals } from './turtle.js';
 import { jobVisual, recolorSvgToGold } from './villagers.js';
 import { wildlifeOpacity } from './wildlife-director.js';
 import { findBestDragOrigin, STORY_CONFIG } from './story.js';
+import { smooth } from './climate.js';
 
 export const RENDER_CONFIG = {
   maxDpr: 1.5,
@@ -50,6 +51,20 @@ export const debugOptions = {
 function frameAt(animation, seconds) {
   const frame = Math.floor(seconds * animation.fps);
   return animation.loop === false ? Math.min(frame, animation.frameCount - 1) : frame % animation.frameCount;
+}
+
+export function butterflyHover(entity, seconds, flap) {
+  const { x, y } = entity.position;
+  const seed = entity.tile.x * 0.58 + entity.tile.y * 0.91;
+  const orbit = seconds * 1.1 + seed;
+  const glideCycle = (seconds + seed * 0.23) % 1.35;
+  return {
+    position: {
+      x: Math.round(x + 5 * Math.sin(orbit) + 1.1 * Math.sin(orbit * 2)),
+      y: Math.round(y - 2 + 2.35 * Math.cos(orbit * 2 + 0.3) + 0.65 * Math.sin(orbit)),
+    },
+    frame: glideCycle < flap.frameCount / flap.fps ? frameAt(flap, glideCycle) : 0,
+  };
 }
 
 export function createRenderer(canvas, world, camera, view) {
@@ -126,7 +141,7 @@ export function createRenderer(canvas, world, camera, view) {
     if (!options) return asset.id;
     const cfg = options.config;
     const cfgKey = cfg
-      ? `${cfg.seed ?? ''}_${cfg.lifeStage ?? ''}_${cfg.heldObject ?? ''}_${cfg.accessories ? cfg.accessories.join(',') : ''}`
+      ? `${cfg.seed ?? ''}_${cfg.lifeStage ?? ''}_${cfg.heldObject ?? ''}_${cfg.expression ?? ''}_${cfg.accessories ? cfg.accessories.join(',') : ''}`
       : '';
     return `${asset.id}|${cfgKey}|${options.direction ?? ''}|${options.animation ?? ''}|${options.frame ?? ''}|${options.shadow ?? ''}|${options.rank ?? ''}|${options.golden ? 'gold' : ''}`;
   }
@@ -149,7 +164,8 @@ export function createRenderer(canvas, world, camera, view) {
     else if (ready) context.drawImage(spriteImage, x, y);
     if (faded) context.globalAlpha = 1;
     if (hit && ready) {
-      hits.push({ entity, x, y, width: asset.width, height: asset.height, hit, image: spriteImage, sway: sprite.sway });
+      hits.push({ entity, x, y, width: asset.width, height: asset.height, hit, image: spriteImage, sway: sprite.sway,
+        butterfly: hit === 'collectible' && asset.category === 'butterfly' ? sprite.position : null });
     }
   }
 
@@ -241,18 +257,26 @@ export function createRenderer(canvas, world, camera, view) {
   function villagers() {
     return state.villagers.map(entity => {
       const config = { ...entity.appearance, name: entity.name, lifeStage: entity.lifeStage };
-      const animation = entity.animation;
-      const definition = assets.villager.animations[animation];
+      const reveal = view.mode === 'playing' && world.collectibleReveals?.get(entity.id);
+      const { animations } = assets.villager;
+      const animation = reveal ? ['collectLift', 'pickup', 'idle'].find(clip => animations[clip]) : entity.animation;
+      if (reveal) config.expression = 'surprised';
+      const definition = animations[animation];
       const skill = jobVisual(entity);
       const tier = skill?.tier ?? 0;
       if (tier && animation === 'gather' && !config.accessories.includes('bag')) config.accessories = [...config.accessories, 'bag'];
       const fps = assets.characterFps(animation, config) / (skill && entity.work.phase === 'work' ? skill.rank.workTime : 1);
+      const grab = entity.work?.job === 'collect' && entity.work.phase === 'work';
+      const grabDuration = entity.work?.grabDuration ?? 3.2;
+      const frame = reveal ? Math.min(Math.floor(reveal.age * 9), definition.frameCount - 1)
+        : grab ? Math.max(0, Math.min(Math.floor((1 - entity.work.remaining / grabDuration) * definition.frameCount), definition.frameCount - 1))
+          : villagerFrame(entity, definition.frameCount) ?? frameAt({ ...definition, fps }, state.time.seconds);
       const sprite = describeSprite(entity, assets.villager, {
-        config, animation, direction: entity.direction,
-        frame: villagerFrame(entity, definition.frameCount) ?? frameAt({ ...definition, fps }, state.time.seconds),
+        config, animation, direction: reveal ? 'front' : entity.direction, frame,
         shadow: false, rank: tier, golden: Boolean(entity.special?.golden),
       }, groundPosition(entity), 'villager');
       sprite.ground = contactVisual(entity, 'villager');
+      sprite.reveal = reveal;
       sprite.y += sprite.ground.offsetY;
       const landingAge = state.time.seconds - entity.landedAt;
       if (landingAge >= 0 && landingAge < 0.19) {
@@ -261,6 +285,37 @@ export function createRenderer(canvas, world, camera, view) {
       }
       return sprite;
     });
+  }
+
+  function drawCollectibleReveal(sprite) {
+    const { assetId, age, duration } = sprite.reveal;
+    const asset = assets.registry.get(assetId);
+    const rarity = assets.collectibleRarities[asset.rarity];
+    const x = sprite.position.x;
+    const head = { adult: 7, elder: 9, child: 13 }[sprite.entity.lifeStage] ?? 13;
+    const top = sprite.y + head + 4 - Math.round(17 * smooth(age / 0.28));
+    const frame = frameAt(asset.animations.fx, Math.max(0, age - 0.23));
+    context.save();
+    context.globalAlpha = smooth((duration - age) / 0.22);
+    const raised = age >= 0.22;
+    const source = raised ? image(`reveal:${assetId}:${frame}`, () => asset.svg({ animation: 'fx', frame }))
+      : image(`reveal:${assetId}`, () => asset.svg());
+    drawImage(source, x - asset.width / 2, top);
+    if (raised) {
+      const sparkleX = Math.round(x + (frame % 2 === 0 ? 10 : -10));
+      const sparkleY = Math.round(top + 4 + frame % 2 * 5);
+      context.fillStyle = rarity.color;
+      context.fillRect(sparkleX - 1, sparkleY, 3, 1);
+      context.fillRect(sparkleX, sparkleY - 1, 1, 3);
+      context.font = 'bold 7px monospace';
+      context.textAlign = 'center';
+      const width = Math.ceil(context.measureText(rarity.label).width) + 8;
+      context.fillStyle = '#30251d';
+      context.fillRect(Math.round(x - width / 2), Math.round(top - 12), width, 10);
+      context.fillStyle = rarity.color;
+      context.fillText(rarity.label, Math.round(x), Math.round(top - 5));
+    }
+    context.restore();
   }
 
   function buildings() {
@@ -365,12 +420,41 @@ export function createRenderer(canvas, world, camera, view) {
     context.restore();
   }
 
+  function drawFishingActivity(bounds) {
+    if (!state.abilities.fish || (view.mode && view.mode !== 'playing')) return;
+    context.save();
+    for (const spot of map.fishingSpots) {
+      if (spot.requires.includes('bridge_repaired') && !state.worldFlags.repair_bridge) continue;
+      const tile = spot.waterTarget;
+      const { x, y } = tileToWorld(tile, tileSize);
+      if (x + 8 < bounds.left || y + 5 < bounds.top || x - 8 > bounds.right || y - 5 > bounds.bottom) continue;
+      const phase = (state.time.seconds / 2.4 + (tile.x * 0.137 + tile.y * 0.271)) % 1;
+      const drift = Math.round(Math.sin(phase * Math.PI * 2) * 3);
+      const tail = Math.cos(phase * Math.PI * 2) >= 0 ? -2 : 3;
+      context.globalAlpha = 0.65;
+      context.fillStyle = '#245a6c';
+      context.fillRect(x + drift, y, 3, 2);
+      context.fillRect(x + drift + tail, y + Math.floor(phase * 8) % 2, 2, 1);
+      context.fillStyle = '#d1f2ee';
+      for (const progress of [phase, (phase + 0.5) % 1]) {
+        const radius = 2 + Math.floor(progress * 5);
+        const rise = 1 + Math.floor(progress * 2);
+        context.globalAlpha = 0.85 * (1 - progress);
+        context.fillRect(x - radius, y - 1, 1, 2);
+        context.fillRect(x + radius, y - 1, 1, 2);
+        context.fillRect(x - radius + 2, y - rise, radius * 2 - 3, 1);
+        context.fillRect(x - radius + 2, y + rise, radius * 2 - 3, 1);
+      }
+    }
+    context.restore();
+  }
+
   function collectibles() {
     return (view.debug ? [...world.collectiblePreviews, ...state.activeCollectibles] : state.activeCollectibles).map(entity => {
       const asset = assets.registry.get(entity.assetId);
-      const animation = asset.animations.flap && 'flap';
-      const options = animation ? { animation, frame: frameAt(asset.animations[animation], state.time.seconds) } : undefined;
-      return describeSprite(entity, asset, options, entity.position, 'collectible');
+      const flight = asset.animations.flap && butterflyHover(entity, state.time.seconds, asset.animations.flap);
+      const options = flight ? { animation: 'flap', frame: flight.frame } : undefined;
+      return describeSprite(entity, asset, options, flight?.position ?? entity.position, 'collectible');
     });
   }
 
@@ -604,6 +688,7 @@ export function createRenderer(canvas, world, camera, view) {
     }
     drawEffects(bounds);
     drawShoreRipples();
+    drawFishingActivity(bounds);
     drawFishParticles(true);
     for (const sprite of animals) if (overCanopy(sprite)) paintSprite(sprite, bounds);
     drawCloudShadows(context, map, bounds, atmosphere, state.time.seconds);
@@ -613,15 +698,6 @@ export function createRenderer(canvas, world, camera, view) {
     drawRain(context, width, height, state.time.seconds, scale, atmosphere);
     if (view.settings?.lightning) drawDistantLightning(context, width, height, atmosphere.rain, state.time.seconds);
     if (view.mode && view.mode !== 'playing') return;
-    if (state.abilities.fish) {
-      const wave = assets.registry.get('icon_arrowD');
-      for (const spot of map.fishingSpots) {
-        if (spot.requires.includes('bridge_repaired') && !state.worldFlags.repair_bridge) continue;
-        const { x, y } = tileToWorld(spot.waterTarget, tileSize);
-        if (x + 8 < bounds.left || y + 8 < bounds.top || x - 8 > bounds.right || y - 8 > bounds.bottom) continue;
-        drawImage(image(wave.id, wave.svg), x - 8, y - 8);
-      }
-    }
     drawPreview();
     const sprites = [...flatScenery, ...entities];
     drawDebug(sprites);
@@ -635,6 +711,10 @@ export function createRenderer(canvas, world, camera, view) {
     if (object) drawStudioMarker('marker_interactable', object.anchor || tileToWorld(object.standPosition, tileSize));
     for (const sprite of villagersOnMap) {
       const v = sprite.entity;
+      if (sprite.reveal && v.id !== view.drag?.id) {
+        drawCollectibleReveal(sprite);
+        continue;
+      }
       if (v.id !== view.drag?.id && v.holdStillUntil > state.time.seconds) {
         const cx = Math.round(sprite.position.x);
         const cy = Math.round(sprite.position.y - 2);
@@ -865,12 +945,20 @@ export function createRenderer(canvas, world, camera, view) {
 
   function pick(position, only, excludeId) {
     const tile = worldToTile(position, tileSize);
-    const find = hit => hits.findLast(sprite => sprite.hit === hit && sprite.entity.id !== excludeId && hasPixel(sprite, position));
-    const pickVillager = () => find('villager') || findVillagerExpanded(position, excludeId);
-    if (only === 'villager') return pickVillager();
-    const villager = pickVillager();
-    if (villager) return villager;
+    const find = (hit, test = () => true) => hits.findLast(sprite => sprite.hit === hit
+      && sprite.entity.id !== excludeId && test(sprite) && hasPixel(sprite, position));
+    const exactVillager = find('villager');
+    if (only === 'villager') return exactVillager || findVillagerExpanded(position, excludeId);
+    if (exactVillager) return exactVillager;
+    const exactButterfly = find('collectible', sprite => sprite.butterfly);
+    if (exactButterfly) return exactButterfly;
     const object = find('building') || find('grave') || find('crop') || find('collectible') || find('object');
+    const nearbyButterfly = hits.findLast(({ butterfly, entity }) => butterfly && !entity.id.startsWith('preview_')
+      && (Math.hypot(position.x - butterfly.x, position.y - butterfly.y) <= 10
+        || Math.hypot(position.x - entity.position.x, position.y - entity.position.y) <= 8));
+    if (!object && nearbyButterfly) return nearbyButterfly;
+    const villager = findVillagerExpanded(position, excludeId);
+    if (villager) return villager;
     if (object) return object;
     const grave = state.graves?.find(entry => entry.tile.x === tile.x && entry.tile.y === tile.y);
     if (grave) return { hit: 'grave', entity: grave };
