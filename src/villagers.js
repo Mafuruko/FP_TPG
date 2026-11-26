@@ -73,6 +73,39 @@ export function jobVisual(villager) {
   return jobSkill(villager, work.job);
 }
 
+const reactionFaces = {
+  question: 'confused', warn: 'worried', danger: 'worried',
+  sick: 'sad', happy: 'happy', love: 'happy',
+};
+
+export function villagerPortraitExpression(villager) {
+  return villager.appearance.expression === 'happy' ? 'happy' : 'neutral';
+}
+
+export function villagerExpression(villager, seconds) {
+  const { animation, appearance, conversation, illness, needs, reaction, snakeFlee, work } = villager;
+  if (reaction?.until > seconds && reactionFaces[reaction.icon]) return reactionFaces[reaction.icon];
+  if (snakeFlee) return 'worried';
+  if (illness || needs.health < 55) return 'sad';
+  if (animation === 'sleep' || needs.energy < 40) return 'tired';
+  if (animation === 'eat' || animation === 'holdBaby' || animation === 'celebrate' || animation === 'talk') return 'happy';
+  if (conversation) return 'neutral';
+  if (work?.phase === 'work' || animation === 'investigate') return 'focused';
+  if (animation === 'idle' || animation === 'sit') {
+    const seed = appearance.seed >>> 0;
+    const cycle = 9 + seed % 6;
+    const smile = villagerPortraitExpression(villager) === 'happy' ? 3 : 1.8;
+    if ((seconds + seed % 97 / 7) % cycle < smile) return 'happy';
+  }
+  return 'neutral';
+}
+
+export function villagerBlink(villager, seconds) {
+  const seed = villager.appearance.seed >>> 0;
+  const cycle = 4.2 + seed % 19 / 10;
+  return (seconds + seed % 127 / 23) % cycle >= cycle - 0.14;
+}
+
 const GOLD_RAMP = [
   [0.0, [52, 34, 8]],
   [0.18, [104, 68, 12]],

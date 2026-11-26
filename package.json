@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node tools/serve.js",
+    "export:guardian": "node tools/export-guardian.js",
     "test": "node --test"
   },
   "engines": { "node": ">=20" }

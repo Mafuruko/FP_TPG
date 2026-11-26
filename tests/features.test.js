@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { createAssets } from '../src/assets.js';
 import { tileToWorld } from '../src/geometry.js';
-import { readStudioModules } from '../tools/studios.js';
+import { readGuardianModule, readStudioModules } from '../tools/studios.js';
+import { GuardianArt } from '../src/guardian-art.js';
 import { createWorld, updateIslandPreview, updateWorld } from '../src/world.js';
 import { startGameplay } from '../src/gameplay.js';
 import { needStatus, recolorSvgToGold, skillProgress } from '../src/villagers.js';
@@ -17,13 +19,14 @@ import {
   readHudLayout,
   saveHudLayout,
 } from '../src/hud-windows.js';
-import { computeAtmosphere } from '../src/atmosphere.js';
+import { ATMOSPHERE_CONFIG, computeAtmosphere, sampleClouds } from '../src/atmosphere.js';
 import { createClimate, sampleWeather, WEATHER_CONFIG } from '../src/climate.js';
 import { runDevAction } from '../src/dev-tools.js';
 import { createIslandSaves, loadUnlocks, readVillage, restoreVillage, saveUnlocks, saveVillage, WIPE_STORAGE_KEYS, wipeAllGameData } from '../src/save.js';
 import { loadPreferences, storePreferences } from '../src/preferences.js';
 import { createIslandDraft, createStartingIsland } from '../src/island-setup.js';
 import { buildEventSequence, FEATURE_GUIDES, getActiveChapter, getSurvivalStage, STORY_CHAPTERS, STORY_CONFIG } from '../src/story.js';
+import { createAuronCheckIns } from '../src/auron-dialogue.js';
 
 const { uiCss: _uiCss, ...modules } = await readStudioModules();
 const studios = Object.fromEntries(await Promise.all(Object.entries(modules).map(async ([key, code]) => [
@@ -43,8 +46,8 @@ function browserStorage() {
 test('new island setup saves the island name and exactly two customized adult villagers', () => {
   const world = createWorld(assets);
   const saves = createIslandSaves(browserStorage(), world);
-  const draft = createIslandDraft(world.state, 2);
-  assert.equal(draft.name, 'Island 2');
+  const draft = createIslandDraft(world.state);
+  assert.equal(draft.name, 'Stormbay Island');
   assert.equal(draft.villagers.length, 2);
   assert.deepEqual(draft.villagers.map(v => v.sex), ['female', 'male']);
   draft.name = '  Bay of Stars  ';
@@ -119,7 +122,8 @@ test('global display, comfort and volume settings persist independently of islan
   const storage = browserStorage();
   storage.setItem('island-colony.audio', '{"musicVolume":67}');
   assert.equal(loadPreferences(storage).music, 67);
-  const changed = { ...loadPreferences(storage), master: 83, music: 54, sfx: 29, integer: true, lightning: true };
+  const changed = { ...loadPreferences(storage), master: 83, music: 54, sfx: 29, integer: true, lightning: true,
+    voice: 27, voiceMute: true, dialogueSpeed: 'fast' };
   storePreferences(storage, changed);
   const world = createWorld(assets);
   const saves = createIslandSaves(storage, world);
@@ -272,6 +276,28 @@ test('ambient lighting blends color stops, moves sun shadows, and fades lamps ar
   assert.ok(rainyDay.ambient[0] < rainyDay.ambient[2] && rainyDay.ambient[2] < 255);
 });
 
+test('sky clouds and ground shadows share drift but respond independently to zoom and light', () => {
+  const meta = createWorld(assets).map.meta;
+  const noon = computeAtmosphere(720, 'clear');
+  const overview = sampleClouds(meta, noon, 0, 0.6);
+  const closeUp = sampleClouds(meta, noon, 0, 2);
+  assert.equal(overview.length, ATMOSPHERE_CONFIG.clearCloudCount);
+  assert.equal(closeUp[0].body.opacity, 0);
+  assert.ok(overview[0].body.opacity > sampleClouds(meta, noon, 0, 1)[0].body.opacity);
+  assert.deepEqual(closeUp[0].shadow, overview[0].shadow);
+  assert.ok(overview.every(({ body, shadow }) => body.y < shadow.y));
+
+  const later = sampleClouds(meta, noon, 12, 0.6);
+  assert.ok(later[0].body.x > overview[0].body.x);
+  assert.equal(later[0].body.x - overview[0].body.x, later[0].shadow.x - overview[0].shadow.x);
+  const sunset = sampleClouds(meta, computeAtmosphere(1040, 'clear'), 0, 0.6);
+  assert.ok(sunset[0].shadow.x > overview[0].shadow.x);
+  assert.equal(sunset[0].body.x, overview[0].body.x);
+  const rainy = sampleClouds(meta, computeAtmosphere(720, 'heavy_rain'), 0, 0.6);
+  assert.ok(rainy.length > overview.length && rainy[0].body.opacity < overview[0].body.opacity);
+  assert.deepEqual(sampleClouds(meta, noon, 12, 0.6, { ...ATMOSPHERE_CONFIG, reducedMotion: true }), overview);
+});
+
 test('the clock and weather blends follow simulation speeds, emit events, and survive save restore', () => {
   const world = createWorld(assets);
   const { time, weather } = world.state;
@@ -387,26 +413,86 @@ test('guided story chapters swap vivid shortTitles, omit speaker labels, and sup
   assert.ok(FEATURE_GUIDES.length >= 12);
   assert.ok(FEATURE_GUIDES.every(guide => guide.steps.length === 3));
 
-  // Zero speaker properties on any event beat, and interactive waitFor on arrival tutorial.
+  // A paused opening hands off to an interactive gathering guide.
   const intro = buildEventSequence('intro_arrival', {}, world);
-  assert.equal(intro.beats.length, 3);
-  assert.equal(intro.pauseWorld, false);
-  assert.equal(typeof intro.beats[0].waitFor, 'function');
-  assert.equal(intro.beats[0].dragFrom, 'adult');
+  assert.equal(intro.beats.length, 7);
+  assert.equal(intro.mode, 'story');
+  assert.equal(intro.pauseWorld, true);
+  assert.equal(intro.followUp, 'tutorial_food');
+  assert.match(intro.beats.map(beat => beat.text).join(' '), /Two strangers/);
+  const food = buildEventSequence(intro.followUp, {}, world);
+  assert.equal(food.mode, 'guide');
+  assert.equal(typeof food.beats[0].waitFor, 'function');
+  assert.equal(food.beats[0].dragFrom, 'adult');
+  assert.equal(food.followUp, 'tutorial_resources');
   for (const evId of ['intro_arrival', 'first_illness', 'first_sickness_death', 'first_starvation_death', 'first_old_age_death', 'first_birth', 'colony_lost']) {
     const seq = buildEventSequence(evId, { villager: world.state.villagers[0], baby: world.state.villagers[0] }, world);
     assert.ok(seq.beats.every(beat => beat.speaker === undefined), `${evId} must not include speaker`);
   }
 
   const reveal = buildEventSequence('landmark_reveal', { puzzleId: 'light_campfire' }, world);
+  assert.equal(reveal.mode, 'guide');
   assert.equal(reveal.beats.length, 2);
   assert.match(reveal.beats[1].title, /Spring/);
+  for (const eventId of ['first_birth', 'first_old_age_death', 'first_collectible']) {
+    const notice = buildEventSequence(eventId, {}, world);
+    assert.equal(notice.mode, 'guide');
+    assert.notEqual(notice.pauseWorld, true);
+  }
 
   const fishing = buildEventSequence('feature_research', { abilityId: 'fish' }, world).beats[0];
   assert.equal(fishing.cue, 'water');
   assert.match(fishing.text, /ripples/);
   const spot = world.map.fishingSpots.find(item => !item.requires.includes('bridge_repaired'));
   assert.deepEqual(fishing.focus, tileToWorld(spot.waterTarget, world.map.meta.tileSize));
+});
+
+test('Auron check-ins wait, match the island conditions, and remember remarks across visits', () => {
+  const state = { story: {}, time: { minutes: 1320, seconds: 0 }, weather: { current: 'clear' } };
+  const remarks = [];
+  const show = sequence => {
+    assert.equal(sequence.pauseWorld, false);
+    assert.equal(sequence.mode, 'ambient');
+    assert.equal(sequence.beats[0].focus, undefined);
+    remarks.push(sequence.beats[0].title);
+    return true;
+  };
+  const checkIns = createAuronCheckIns(() => 0.99);
+  checkIns.update(149, state, show);
+  assert.deepEqual(remarks, []);
+  checkIns.update(1, state, () => false);
+  assert.equal(state.story.auronRemarks, undefined);
+  checkIns.update(1, state, show);
+  assert.deepEqual(remarks, ['Night Watch']);
+
+  state.time.minutes = 480;
+  state.weather.current = 'light_rain';
+  checkIns.update(418, state, show);
+  assert.equal(remarks.length, 1);
+  checkIns.update(1, state, show);
+  assert.deepEqual(remarks, ['Night Watch', 'A Passing Shower']);
+
+  const returning = createAuronCheckIns(() => 0.99);
+  const restored = JSON.parse(JSON.stringify(state));
+  returning.update(150, restored, show);
+  assert.deepEqual(remarks, ['Night Watch', 'A Passing Shower', 'The Sound of Home']);
+});
+
+test('the Guardian Studio supplies each Auron emotion and the mystery supports two paths', async () => {
+  const runtime = await readFile(new URL('../src/guardian-art.js', import.meta.url), 'utf8');
+  assert.equal(runtime.replaceAll('\r\n', '\n'), await readGuardianModule());
+  const keys = ['neutral', 'happy', 'laughing', 'thinking', 'surprised', 'worried', 'angry',
+    'smug', 'sad', 'sleepy', 'proud', 'mysterious'];
+  assert.deepEqual(GuardianArt.expressions.map(e => e.key), keys);
+  const steady = GuardianArt.renderGuardian({ expression: 'thinking' });
+  assert.match(steady, /viewBox="0 0 96 96"/);
+  assert.notEqual(GuardianArt.renderGuardian({ expression: 'thinking', mouthFrame: 2 }), steady);
+  assert.notEqual(GuardianArt.renderGuardian({ expression: 'thinking', blinking: true }), steady);
+  const mystery = buildEventSequence('tutorial_mystery', {}, createWorld(assets));
+  assert.equal(mystery.mode, 'choice');
+  assert.equal(mystery.beats[0].choices.length, 2);
+  assert.equal(mystery.beats[mystery.beats[0].choices[0].next].expression, 'sad');
+  assert.equal(mystery.beats[0].choices[1].next, undefined);
 });
 
 test('camera controller smoothly pans to a world target and cancels on manual input', () => {

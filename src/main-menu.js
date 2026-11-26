@@ -89,8 +89,61 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
   }
 
   function beginSetup(slot, overwrite = false) {
-    setup = { slot, overwrite, draft: createDraft(slot) };
+    setup = { slot, overwrite, draft: createDraft() };
     page = 'setup';
+  }
+
+  function thumbnail(founder, key, value) {
+    const appearance = founderAppearance({ ...founder, [key]: value });
+    if (key !== 'accessory') appearance.accessories = [];
+    return portrait(appearance);
+  }
+
+  function pickerLabel(key, value) {
+    const option = founderChoices[key].options.find(entry => (Array.isArray(entry) ? entry[0] : entry) === value);
+    return `${founderChoices[key].label}, ${Array.isArray(option) ? option[1] : optionLabel(option)}`;
+  }
+
+  function appearancePicker(founder, key, label, index) {
+    const crop = ['skinTone', 'hairStyle', 'hairColor'].includes(key) ? 'head' : key === 'clothingStyle' ? 'torso' : 'full';
+    return `<details class="founder-picker" data-appearance="${key}" name="founder-${index}-appearance">
+      <summary aria-label="${pickerLabel(key, founder[key])}">
+        <span class="founder-thumbnail is-${crop}"><img data-current-appearance src="${escape(thumbnail(founder, key, founder[key]))}" alt=""></span>
+        <span>${label}</span>
+      </summary>
+      <div class="founder-option-grid" aria-label="${label} choices"></div>
+    </details>`;
+  }
+
+  function updatePicker(picker, founder, changed) {
+    const key = picker.dataset.appearance;
+    const current = picker.querySelector('[data-current-appearance]');
+    current.src = thumbnail(founder, key, founder[key]);
+    picker.querySelector('summary').setAttribute('aria-label', pickerLabel(key, founder[key]));
+    if (!picker.open) {
+      picker.querySelector('.founder-option-grid').replaceChildren();
+      return;
+    }
+    const grid = picker.querySelector('.founder-option-grid');
+    if (!grid.hasChildNodes()) {
+      const cropClass = current.parentElement.className;
+      grid.innerHTML = founderChoices[key].options.map(entry => {
+        const [value, text] = Array.isArray(entry) ? entry : [entry, optionLabel(entry)];
+        return `<button type="button" class="founder-option" data-founder-option="${value}"
+          aria-label="${text}" title="${text}"><span class="${cropClass}"><img alt=""></span></button>`;
+      }).join('');
+    }
+    for (const choice of grid.querySelectorAll('button')) {
+      const value = choice.dataset.founderOption;
+      choice.setAttribute('aria-pressed', String(founder[key] === value));
+      const img = choice.querySelector('img');
+      if (!img.getAttribute('src') || changed !== key) img.src = thumbnail(founder, key, value);
+    }
+  }
+
+  function updateFounder(card, founder, changed) {
+    card.querySelector('[data-founder-preview]').src = portrait(founderAppearance(founder));
+    card.querySelectorAll('[data-appearance]').forEach(picker => updatePicker(picker, founder, changed));
   }
 
   function setupForm() {
@@ -108,11 +161,8 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
               <label class="founder-field">Name<input type="text" name="name" required maxlength="${villagerNameLimit}"
                 value="${escape(founder.name)}" autocomplete="off"></label>
             </div>
-            <div class="founder-controls">${Object.entries(founderChoices).map(([key, { label, options }]) => `
-              <label class="founder-field">${label}<select name="${key}">${options.map(option => {
-                const [value, text] = Array.isArray(option) ? option : [option, optionLabel(option)];
-                return `<option value="${value}" ${founder[key] === value ? 'selected' : ''}>${text}</option>`;
-              }).join('')}</select></label>`).join('')}
+            <div class="founder-controls">${Object.entries(founderChoices).map(([key, { label }]) =>
+              appearancePicker(founder, key, label, index)).join('')}
               ${Object.entries(founderColors).map(([key, label]) => `
                 <label class="founder-field">${label}<input type="color" name="${key}" value="${founder[key]}"></label>`).join('')}
             </div>
@@ -170,6 +220,12 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
   }
 
   bindPreferences(root, applyPreference);
+  root.addEventListener('toggle', event => {
+    const picker = event.target;
+    if (!setup || !picker.matches('details[data-appearance]') || !root.contains(picker)) return;
+    const card = picker.closest('[data-founder]');
+    updatePicker(picker, setup.draft.villagers[Number(card.dataset.founder)]);
+  }, true);
   root.addEventListener('input', event => {
     const field = event.target;
     if (!setup || !field.closest('.island-setup-form')) return;
@@ -178,7 +234,7 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
       const card = field.closest('[data-founder]');
       const founder = setup.draft.villagers[Number(card.dataset.founder)];
       founder[field.name] = field.value;
-      if (field.name !== 'name') card.querySelector('[data-founder-preview]').src = portrait(founderAppearance(founder));
+      if (field.name !== 'name') updateFounder(card, founder, field.name);
     }
     if (field.type === 'text') field.setCustomValidity('');
   });
@@ -197,6 +253,24 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
     }
   });
   root.addEventListener('click', event => {
+    const choice = event.target.closest('button[data-founder-option]');
+    if (choice && setup && !root.inert) {
+      const picker = choice.closest('[data-appearance]');
+      const key = picker.dataset.appearance;
+      const card = choice.closest('[data-founder]');
+      const founder = setup.draft.villagers[Number(card.dataset.founder)];
+      founder[key] = choice.dataset.founderOption;
+      picker.open = false;
+      updateFounder(card, founder, key);
+      picker.querySelector('summary').focus({ preventScroll: true });
+      sound();
+      return;
+    }
+    if (setup) {
+      for (const picker of root.querySelectorAll('.founder-picker[open]')) {
+        if (!picker.contains(event.target)) picker.open = false;
+      }
+    }
     const control = event.target.closest('button[data-menu]');
     if (!control || root.inert || control.disabled) return;
     sound();
@@ -245,7 +319,8 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
 
   root.addEventListener('keydown', event => {
     if (event.key !== 'Tab') return;
-    const controls = [...root.querySelectorAll('button:enabled, input:enabled, select:enabled')];
+    const controls = [...root.querySelectorAll('button:enabled, input:enabled, select:enabled, summary')]
+      .filter(control => control.getClientRects().length);
     if (event.shiftKey && document.activeElement === controls[0]) {
       event.preventDefault();
       controls.at(-1)?.focus();
@@ -265,6 +340,16 @@ export function createMainMenu(root, { saves, preferences, fullscreenSupported, 
       root.inert = false;
       render();
     },
-    closePanel: back,
+    closePanel() {
+      if (page === 'setup') {
+        const picker = document.activeElement?.closest('details[open]') ?? root.querySelector('details[open]');
+        if (picker) {
+          picker.open = false;
+          picker.querySelector('summary').focus();
+          return;
+        }
+      }
+      back();
+    },
   };
 }

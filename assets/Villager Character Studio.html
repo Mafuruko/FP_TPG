@@ -46,7 +46,7 @@ const W=24,H=32,CX=12,OUT='#3b2a22',$=s=>document.querySelector(s),esc=s=>String
 const SKN=['#f6d3b3','#e8b98d','#c98f5f','#a56b43','#7a4a2c','#51311d'];
 const HC={black:'#2b2220',dark_brown:'#4a2f20',brown:'#7a4a2c',auburn:'#8e3b24',blonde:'#d9b25a',ginger:'#c8662a',gray:'#9a9a9a',white:'#eeeae0'};
 const PAL=[['#73965B','#C4A36A'],['#3f8f8a','#f0e2b0'],['#c8643f','#f2d9a0'],['#d6a73a','#7a5a3a'],['#5a7fb0','#e8dcc0'],['#9b5a7a','#e8d0a8'],['#8a6a45','#6f9a5b'],['#e8dcc0','#73965B'],['#b5483a','#e8c97a'],['#4f6f52','#d8b66a']];
-const HS=['short','messy','curly','long','ponytail','braid','bun','bob','bald','receding','tuft'],CS=['tunic','sleeveless','farmer','dress','wrap','researcher'],EXP=['neutral','happy','sad','surprised'],AC=['flower','headband','hat','bag','beard','necklace','stick','bandana'];
+const HS=['short','messy','curly','long','ponytail','braid','bun','bob','bald','receding','tuft'],CS=['tunic','sleeveless','farmer','dress','wrap','researcher'],EXP=['neutral','happy','sad','surprised','focused','worried','tired','confused'],AC=['flower','headband','hat','bag','beard','necklace','stick','bandana'];
 const HELD=['none','axe','pickaxe','hammer','hoe','rod','net','can','book','log','stone','berries','veg','pouch','baby','stick'],DIRS=['front','left','right','back'],STG=['baby','child','adult','elder'];
 const ORDER=['hairB','armB','legs','shoes','lo','torso','up','armF','head','face','hairF','fh','acc','bag','held'];
 const ST={adult:{hw:10,hh:9,bh:9,lh:6,hd:0},elder:{hw:10,hh:9,bh:8,lh:6,hd:1},child:{hw:10,hh:8,bh:6,lh:4,hd:0}};
@@ -64,7 +64,7 @@ eat:{n:'Eat',fps:4,f:[[0,0,0,0,0,,{food:1}],[0,0,0,0,4,,{food:1}],[0,0,0,0,5,,{f
 carry:{n:'Carry',fps:8,f:CR,tool:'log'},celebrate:{n:'Celebrate',fps:6,f:[[0,0,0,2,2,,{ex:'happy',mo:1}],[-1,1,1,3,3,,{ex:'happy'}],[0,0,0,2,2,,{ex:'happy',mo:1}],[-1,1,1,3,3,,{ex:'happy'}]]},
 pickup:{n:'Picked up',fps:10,f:[[-1,1,-2,2,3,,{ex:'surprised'}],[0,-1,1,3,2,,{ex:'surprised'}],[-1,-2,1,3,2,,{ex:'surprised'}],[0,1,-1,2,3,,{ex:'surprised'}]]},
 collectGrab:{n:'Grab collectible',fps:7,f:[[0],[2,0,0,-1,4],[4,1,1,-1,-1],[2,0,0,4,4]]},
-collectLift:{n:'Hold up collectible',fps:9,f:[[2,0,0,4,4,,{ex:'surprised'}],[0,0,0,2,2,,{ex:'surprised'}],[-1,0,0,6,6,,{ex:'surprised'}],[0,0,0,6,6,,{ex:'surprised'}]]},
+collectLift:{n:'Hold up collectible',fps:9,f:[[2,0,0,4,4,,{ex:'surprised'}],[0,0,0,2,2,,{ex:'surprised'}],[-1,0,0,6,6,,{ex:'happy'}],[0,0,0,6,6,,{ex:'happy'}]]},
 sad:{n:'Sad / cry',fps:2,f:[[1,0,0,0,0,,{ex:'sad',bl:1,tear:1}],[1,0,0,0,0,,{ex:'sad',bl:1,tear:2}]]},sick:{n:'Sick',fps:2,f:[[1,0,0,0,0,,{ex:'sad',sick:1}],[1,0,0,1,1,,{ex:'sad',sick:1,bl:1}]]},
 gather:{n:'Gather',fps:6,f:[[0],[1,0,0,-1,-1],[2,0,0,-1,-1],[1,0,0,-1,-1,,{food:1}]]},farm:{n:'Farm (hoe)',fps:6,f:S5,tool:'hoe'},
 water:{n:'Water plants',fps:4,f:[[0,0,0,4,3],[0,0,0,4,3,,{}],[0,0,0,4,3,,{drop:1}],[0,0,0,4,3,,{drop:1}]],tool:'can'},
@@ -89,12 +89,25 @@ const CM={a:'#a87848',b:'#6b4a30',g:'#6f9a5b',r:'#c8503c',w:'#f2efe0',s:'#9aa0aa
 const mp=(m,x,y)=>m.forEach((r,j)=>[...r].forEach((ch,i)=>{if(ch!=='.')P('held',x+i,y+j,1,1,CM[ch])}));
 const head=(hx,hy,hw,hh,v)=>{P('head',hx+1,hy,hw-2,1,sk);P('head',hx,hy+1,hw,hh-2,sk);P('head',hx+1,hy+hh-1,hw-2,1,sk);
 if(v==='b')return;const ey=hy+(hh>>1),my=ey+(hh>8?3:2),xs=v==='f'?[hx+2,hx+hw-3]:[hx+2],mx=v==='f'?hx+(hw>>1)-1:hx+1;
-xs.forEach(x=>{po.bl?P('face',x,ey+1,1,1,'#2b2220'):P('face',x,ey,1,ex==='surprised'?2:1,'#2b2220');
+const blink=po.m==='lie'||(po.tear&&po.bl)||(cfg.blinking??po.bl);
+const eye='#2b2220',lip=sh(sk,-.34);
+xs.forEach((x,i)=>{
+if(blink)P('face',x-i,ey+1,2,1,eye);
+else if(ex==='tired')P('face',x-i,ey,2,1,eye);
+else P('face',x,ey,1,ex==='surprised'?2:1,eye);
+const inward=i===0?1:-1;
+if(ex==='focused')P('face',x+inward,ey-1,1,1,eye);
+if(ex==='worried')P('face',x+inward,ey-2,1,1,eye);
+if(ex==='confused'&&i===0)P('face',x,ey-2,2,1,eye);
 if(po.tear)P('face',x,ey+1+po.tear,1,1,'#7fb6e8');if(stg==='elder')P('face',x,ey+2,1,1,ds);
 if(ex==='happy'&&v==='f')P('face',x===hx+2?hx+1:hx+hw-2,ey+1,1,1,'#e8907a')});
 if(v==='s')P('face',hx-1,ey+1,1,1,sk);
-if(po.mo||ex==='surprised')P('face',mx,my,2,2,'#8e3b3b');else{P('face',mx,my,2,1,ds);
-if(ex==='happy'){P('face',mx-1,my-1,1,1,ds);P('face',mx+2,my-1,1,1,ds)}if(ex==='sad'){P('face',mx-1,my+1,1,1,ds);P('face',mx+2,my+1,1,1,ds)}}};
+if(ex==='surprised'||(po.mo&&po.tear))P('face',mx,my,2,2,'#8e3b3b');
+else{
+P('face',mx,my,ex==='confused'?1:2,1,po.mo?'#8e3b3b':lip);
+if(ex==='happy'){P('face',mx-1,my-1,1,1,lip);P('face',mx+2,my-1,1,1,lip)}
+if(ex==='sad'||ex==='worried'){P('face',mx-1,my+1,1,1,lip);P('face',mx+2,my+1,1,1,lip)}
+}};
 const hair=(hx,hy,hw,hh,v,st)=>{if(st==='bald')return;const f=(x,y,w,h)=>P('hairF',x,y,w,h,hc),b=(x,y,w,h)=>P('hairB',x,y,w,h,sh(hc,-.15)),cx=hx+(hw>>1);
 if(st==='tuft'){f(cx-1,hy-1,2,1);f(cx,hy-2,1,1);v==='b'&&f(cx-2,hy,4,2);return}
 if(v==='b'){if(st==='receding'){f(hx,hy+1,hw,hh-5);f(hx+2,hy,hw-4,1)}else{f(hx+1,hy-1,hw-2,1);f(hx,hy,hw,hh-3)}}
@@ -195,7 +208,7 @@ const hcol=s==='elder'&&r()<.75?pk(['gray','white']):pk(ks.filter(k=>k!=='gray'&
 const cands=AC.filter(a=>s==='baby'?a==='flower'||a==='headband':true);for(let i=0;i<(r()<.3?0:r()<.7?1:2);i++){const a=pk(cands);if(!acc.includes(a))acc.push(a)}
 if(acc.includes('hat')&&(hs==='bun'||acc.includes('flower')))acc.splice(acc.indexOf('hat'),1);
 if(s==='elder'&&r()<.4)acc.push('beard');if(acc.includes('beard')&&hs==='bald'&&0)0;
-return norm({id:'villager_'+String(seed).padStart(3,'0'),name:pk(NAMES),seed,lifeStage:s,bodyStyle:pk(['style_01','style_02']),skinTone:'skin_0'+(1+(r()*6|0)),hairStyle:s==='elder'&&r()<.3?'receding':hs,hairColor:hcol,clothingStyle:pk(CS),primaryColor:pal[0],secondaryColor:pal[1],accessories:[...new Set(acc)],expression:pk(EXP),direction:'front',animation:'idle',heldObject:'none'})}
+return norm({id:'villager_'+String(seed).padStart(3,'0'),name:pk(NAMES),seed,lifeStage:s,bodyStyle:pk(['style_01','style_02']),skinTone:'skin_0'+(1+(r()*6|0)),hairStyle:s==='elder'&&r()<.3?'receding':hs,hairColor:hcol,clothingStyle:pk(CS),primaryColor:pal[0],secondaryColor:pal[1],accessories:[...new Set(acc)],expression:pk(['neutral','happy']),direction:'front',animation:'idle',heldObject:'none'})}
 /* ---------- UI ---------- */
 const S={cfg:createCharacter({}),dir:'front',frame:0,play:true,loop:true,speed:1,zoom:8,grid:true};
 let DY=[],GAL=[],T=0,acc=0,last=performance.now();

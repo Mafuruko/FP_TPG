@@ -16,7 +16,7 @@ import { enableWildlifeDirector } from '../src/world.js';
 import { cameraWorldRect, rangeFromView, wildlifeOpacity, wildlifeTuning, wildlifeZone } from '../src/wildlife-director.js';
 import { startGameplay } from '../src/gameplay.js';
 import { advanceOffline, readVillage, restoreVillage, saveVillage } from '../src/save.js';
-import { skillProgress } from '../src/villagers.js';
+import { skillProgress, villagerBlink, villagerExpression, villagerPortraitExpression } from '../src/villagers.js';
 
 const { uiCss, ...modules } = await readStudioModules();
 const studios = Object.fromEntries(await Promise.all(Object.entries(modules).map(async ([key, code]) => [
@@ -216,6 +216,39 @@ test('a villager rests after delivering and returns to the same job, then switch
   runUntil(world, () => villager.activity === 'Looking for ripe berries' && villager.work && villager.work.ref.id !== ref.id);
   assert.equal(world.objects.get(villager.work.ref.id).type, 'berry_bush');
   assert.equal(villager.preferredJob.ref.id, villager.work.ref.id);
+});
+
+test('villager faces follow their activity and reactions even with a surprised face in an older save', () => {
+  const villager = createWorld(assets).state.villagers[0];
+  villager.appearance = { ...villager.appearance, seed: 0, expression: 'surprised' };
+  assert.equal(villagerPortraitExpression(villager), 'neutral');
+  assert.equal(villagerExpression(villager, 0), 'happy');
+  assert.equal(villagerExpression(villager, 4), 'neutral');
+  assert.equal(villagerBlink(villager, 4.1), true);
+  assert.equal(villagerBlink(villager, 4.3), false);
+
+  villager.work = { phase: 'work' };
+  assert.equal(villagerExpression(villager, 4), 'focused');
+  villager.reaction = { icon: 'question', until: 5 };
+  assert.equal(villagerExpression(villager, 4), 'confused');
+  assert.equal(villagerExpression(villager, 5), 'focused');
+  villager.reaction = { icon: 'warn', until: 6 };
+  assert.equal(villagerExpression(villager, 5), 'worried');
+  villager.illness = {};
+  assert.equal(villagerExpression(villager, 6), 'sad');
+  delete villager.illness;
+  villager.animation = 'sleep';
+  assert.equal(villagerExpression(villager, 6), 'tired');
+
+  const face = (expression, animation = 'idle', frame = 0, blinking = false) =>
+    assets.villager.svg({ config: { ...villager.appearance, expression, blinking }, animation, frame })
+      .match(/<g class="layer-face">(.*?)<\/g>/)[1];
+  const expressions = ['neutral', 'happy', 'sad', 'surprised', 'focused', 'worried', 'tired', 'confused'];
+  assert.equal(new Set(expressions.map(expression => face(expression))).size, expressions.length);
+  assert.notEqual(face('neutral', 'idle', 0, true), face('neutral'));
+  assert.ok(face('neutral', 'pickup').includes('#8e3b3b'));
+  assert.ok(face('neutral', 'collectLift').includes('#8e3b3b'));
+  assert.ok(!face('neutral', 'collectLift', 3).includes('#8e3b3b'));
 });
 
 test('idle villagers face each other and take turns talking until a player redirects one of them', () => {

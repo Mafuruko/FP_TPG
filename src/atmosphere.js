@@ -13,6 +13,8 @@ export const ATMOSPHERE_CONFIG = {
   duskLightFade: [1100, 1230],
   maxShadowOffset: 6,
   cloudCount: 19,
+  clearCloudCount: 6,
+  cloudZoomRange: [0.74, 1.16],
   rainDropCount: 165,
   rainSplashCount: 35,
   rainSpeed: 365,
@@ -88,48 +90,109 @@ export function drawDistantLightning(context, width, height, rain, seconds, conf
   context.restore();
 }
 
-const masks = new Map();
-function pixelMask(kind) {
-  if (masks.has(kind)) return masks.get(kind);
+let lightMask;
+function glowMask() {
+  if (lightMask) return lightMask;
   const canvas = document.createElement('canvas');
-  canvas.width = 32;
-  canvas.height = kind === 'cloud' ? 20 : 32;
+  canvas.width = canvas.height = 32;
   const context = canvas.getContext('2d');
-  context.fillStyle = kind === 'cloud' ? '#233451' : '#ffd18a';
+  context.fillStyle = '#ffd18a';
   const midX = canvas.width / 2;
   const midY = canvas.height / 2;
   for (let y = 0; y < canvas.height; y++) {
     for (let x = 0; x < canvas.width; x++) {
       const dx = (x + 0.5 - midX) / midX;
       const dy = (y + 0.5 - midY) / midY;
-      const radius = kind === 'cloud'
-        ? Math.min(Math.hypot(dx + 0.31, (dy - 0.09) * 1.24) * 1.45, Math.hypot(dx - 0.23, (dy + 0.11) * 1.1) * 1.33)
-        : Math.hypot(dx, dy);
+      const radius = Math.hypot(dx, dy);
       const alpha = Math.floor(smooth(1 - radius) * 16) / 16;
       if (alpha <= 0) continue;
       context.globalAlpha = alpha;
       context.fillRect(x, y, 1, 1);
     }
   }
-  masks.set(kind, canvas);
+  lightMask = canvas;
   return canvas;
 }
 
-export function drawCloudShadows(context, map, bounds, atmosphere, seconds, config = ATMOSPHERE_CONFIG) {
-  if (atmosphere.cloud < 0.01) return;
-  const { pixelWidth, pixelHeight } = map.meta;
-  const time = config.reducedMotion ? 0 : seconds;
-  const mask = pixelMask('cloud');
-  for (let i = 0; i < config.cloudCount; i++) {
-    const width = Math.round(150 + hash(i + 90) * 245);
-    const height = Math.round(width * 0.52);
-    const x = Math.round(wrap(hash(i + 3) * (pixelWidth + width) + time * (5 + hash(i + 4) * 4), pixelWidth + width) - width);
-    const y = Math.round(wrap(hash(i + 57) * (pixelHeight + height) + time * 2, pixelHeight + height) - height);
-    if (x + width < bounds.left || y + height < bounds.top || x > bounds.right || y > bounds.bottom) continue;
-    context.globalAlpha = atmosphere.cloud * (0.18 + hash(i + 77) * 0.13);
-    context.drawImage(mask, x, y, width, height);
+const cloudShapes = [
+  [[10, 15, 9, 5], [20, 12, 10, 7], [29, 10, 11, 8], [38, 15, 9, 5]],
+  [[9, 16, 8, 4], [16, 12, 10, 8], [26, 14, 11, 7], [36, 13, 10, 6]],
+  [[11, 15, 10, 5], [21, 11, 11, 7], [27, 13, 9, 7], [36, 12, 11, 8]],
+];
+const cloudArt = [];
+
+function cloudSprite(shape, layer) {
+  cloudArt[shape] ??= {};
+  if (cloudArt[shape][layer]) return cloudArt[shape][layer];
+  const canvas = document.createElement('canvas');
+  canvas.width = 48;
+  canvas.height = 24;
+  const context = canvas.getContext('2d');
+  const lobes = cloudShapes[shape];
+  const shadow = layer === 'shadow';
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      const distance = Math.min(...lobes.map(([cx, cy, rx, ry]) => Math.hypot((x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry)));
+      if (distance > 1) continue;
+      if (shadow) {
+        context.globalAlpha = distance > 0.9 ? 0.27 : distance > 0.76 ? 0.62 : 1;
+        context.fillStyle = '#233451';
+      } else {
+        const shadeLine = 14 + Math.round(Math.sin(x * 0.21 + shape) * 2);
+        context.fillStyle = y > shadeLine + 2 ? '#b9ced9'
+          : y > shadeLine ? '#d9e6eb' : y < 9 || distance > 0.84 ? '#fffdf3' : '#eff4f2';
+      }
+      context.fillRect(x, y, 1, 1);
+    }
   }
-  context.globalAlpha = 1;
+  cloudArt[shape][layer] = canvas;
+  return canvas;
+}
+
+export function sampleClouds({ pixelWidth, pixelHeight }, atmosphere, seconds, zoom, config = ATMOSPHERE_CONFIG) {
+  const time = config.reducedMotion ? 0 : seconds;
+  const bodyVisibility = 1 - between(config.cloudZoomRange, zoom);
+  const columns = 5;
+  const rows = Math.ceil(config.cloudCount / columns);
+  const padding = 200;
+  const spanX = pixelWidth + padding * 2;
+  const spanY = pixelHeight + padding * 2;
+  const clouds = [];
+  for (let i = 0; i < config.cloudCount; i++) {
+    const density = i < config.clearCloudCount ? 1 : smooth(atmosphere.cloud * config.cloudCount - (i - config.clearCloudCount));
+    if (density <= 0) continue;
+    const column = i % columns;
+    const row = (Math.floor(i / columns) + column * 2) % rows;
+    const px = wrap(padding + (column + 0.18 + hash(i + 3) * 0.65) * pixelWidth / columns + time * (1.8 + hash(i + 4) * 2.1), spanX);
+    const py = wrap(padding + (row + 0.18 + hash(i + 57) * 0.65) * pixelHeight / rows + time * (0.4 + hash(i + 21) * 0.7), spanY);
+    const fade = smooth(Math.min(px, spanX - px, py, spanY - py) / 120) * density;
+    const width = Math.round(128 + hash(i + 90) * 114);
+    const height = Math.round(width * 0.49);
+    const altitude = 58 + hash(i + 77) * 70;
+    const x = px - padding - width / 2;
+    const y = py - padding - height / 2;
+    clouds.push({
+      shape: i % cloudShapes.length,
+      body: { x: Math.round(x), y: Math.round(y - altitude), width, height,
+        opacity: fade * bodyVisibility * lerp(0.81, 0.67, atmosphere.rain) },
+      shadow: { x: Math.round(x + atmosphere.shadow.x * altitude / 19),
+        y: Math.round(y + height * 0.14 + atmosphere.shadow.y * altitude / 19),
+        width, height: Math.round(height * 0.8),
+        opacity: fade * lerp(0.14, 0.23, atmosphere.cloud) * atmosphere.shadow.opacity },
+    });
+  }
+  return clouds;
+}
+
+export function drawCloudLayer(context, clouds, bounds, layer) {
+  context.save();
+  for (const cloud of clouds) {
+    const { x, y, width, height, opacity } = cloud[layer];
+    if (opacity < 0.005 || x + width < bounds.left || y + height < bounds.top || x > bounds.right || y > bounds.bottom) continue;
+    context.globalAlpha = opacity;
+    context.drawImage(cloudSprite(cloud.shape, layer), x, y, width, height);
+  }
+  context.restore();
 }
 
 const authoredLights = new WeakMap();
@@ -139,7 +202,7 @@ export function drawNightLights(context, world, atmosphere, bounds, config = ATM
   if (!authoredLights.has(map)) {
     authoredLights.set(map, map.objects.filter(object => object.glow || object.type === 'campfire_site'));
   }
-  const sprite = pixelMask('glow');
+  const sprite = glowMask();
   const seconds = config.reducedMotion ? 0 : state.time.seconds;
 
   function drawGlow(position, spec, seed) {

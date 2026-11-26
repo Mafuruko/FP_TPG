@@ -12,9 +12,9 @@ export const founderChoices = {
 };
 export const founderColors = { primaryColor: 'Outfit color', secondaryColor: 'Trim color' };
 
-export function createIslandDraft(template, slot) {
+export function createIslandDraft(template) {
   return {
-    name: `Island ${slot}`,
+    name: 'Stormbay Island',
     villagers: template.villagers.slice(0, 2).map(({ name, appearance }, index) => ({
       name,
       sex: founderSexes[index],

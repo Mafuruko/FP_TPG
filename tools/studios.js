@@ -52,6 +52,14 @@ function section(script, start, end) {
   return script.slice(from, to);
 }
 
+export async function readGuardianModule() {
+  const html = await readFile(new URL('../assets/island-guardian-studio.html', import.meta.url), 'utf8');
+  const start = '<script id="rendererSource">';
+  const renderer = section(html, start, 'const renderGuardian=GuardianArt.renderGuardian;').slice(start.length);
+  return '// Generated from assets/island-guardian-studio.html by npm run export:guardian.\n'
+    + renderer.trim().replaceAll('\r\n', '\n') + '\n\nexport { GuardianArt };\n';
+}
+
 export async function readStudioModules() {
   const modules = await Promise.all(Object.entries(studios).map(async ([key, [file, boundary, exports]]) => {
     const html = await readFile(new URL('../assets/' + file, import.meta.url), 'utf8');

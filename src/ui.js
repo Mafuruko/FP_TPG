@@ -4,7 +4,7 @@ import { tileToWorld, walkable, worldToTile } from './geometry.js';
 import { debugOptions, svgUrl } from './render.js';
 import { abilities } from './world.js';
 import { construction, costLabel, landmarks, researchProjects } from './progression.js';
-import { needStatus, recolorSvgToGold, skillProgress, villagerQuirks, villagerSkills } from './villagers.js';
+import { needStatus, recolorSvgToGold, skillProgress, villagerPortraitExpression, villagerQuirks, villagerSkills } from './villagers.js';
 import { bindSmartTooltips } from './tooltips.js';
 import { createHudWindowManager } from './hud-windows.js';
 import { renderDevActionsHtml, runDevAction } from './dev-tools.js';
@@ -346,7 +346,10 @@ export function createUI(world, view, actions) {
   }
 
   function portrait(villager, css) {
-    const raw = assets.villager.svg({ config: { ...villager.appearance, name: villager.name, lifeStage: villager.lifeStage } });
+    const raw = assets.villager.svg({ config: {
+      ...villager.appearance, name: villager.name, lifeStage: villager.lifeStage,
+      expression: villagerPortraitExpression(villager),
+    } });
     return img(villager.special?.golden ? recolorSvgToGold(raw) : raw, css);
   }
 

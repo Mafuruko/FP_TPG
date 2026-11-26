@@ -21,7 +21,10 @@ import { createIslandDraft, createStartingIsland } from './island-setup.js';
 import { createMenuSounds, loadPreferences, storePreferences } from './preferences.js';
 import { lerp, smooth } from './climate.js';
 import { buildEventSequence, ensureStoryState, getActiveChapter, STORY_CONFIG } from './story.js';
+import { createAuronCheckIns } from './auron-dialogue.js';
 import { createStoryDirector } from './story-ui.js';
+import { createDialogueVoice } from './dialogue-voice.js';
+import { GuardianArt } from './guardian-art.js';
 
 const assets = createAssets({ island, character, building, collectible, resource, wildlife, ui: studioUI });
 const world = createWorld(assets);
@@ -30,6 +33,11 @@ try { storage = window.localStorage; } catch { /* Continue without persistence. 
 const pristine = structuredClone(world.state);
 const saves = createIslandSaves(storage, world);
 const settings = loadPreferences(storage);
+const voice = createDialogueVoice(settings);
+const auronCheckIns = createAuronCheckIns();
+for (const event of ['pointerdown', 'keydown']) {
+  window.addEventListener(event, input => { if (input.isTrusted) voice.unlock(); }, { capture: true });
+}
 let unlocks = loadUnlocks(storage);
 const sound = createMenuSounds(settings);
 const fullscreenSupported = document.fullscreenEnabled && Boolean(document.documentElement.requestFullscreen);
@@ -43,6 +51,7 @@ let scenicTime = 0;
 let returnCamera;
 const app = document.querySelector('main');
 const title = document.getElementById('title-screen');
+const gameplayPanel = document.getElementById('panel');
 const hud = ['studio-hud', 'hud-windows', 'panel', 'debug-panel', 'story-director'].map(id => document.getElementById(id));
 hud.push(document.querySelector('.bottom'));
 const storyRoot = document.getElementById('story-director');
@@ -187,12 +196,30 @@ const ui = createUI(world, view, {
   lastSave: () => saves.read(activeSlot)?.savedAt,
   focusVillager: () => { if (selectedVillager()) panToTarget(selectedVillager().position, Math.max(camera.zoom, 2.6), selectedVillager().name, 'gold'); },
 });
+document.fonts?.addEventListener('loadingdone', () => ui.hudWindows.clampAll(true));
 const storyDirector = createStoryDirector(storyRoot, {
   world, view, icon: assets.ui.GameUI.ic, reducedMotion,
+  guardian: GuardianArt, settings, voice,
   panTo: (pos, zoom, opts) => cameraController.panTo(pos, zoom, center(), opts),
   onOpen: () => {
     view.storyActive = true;
-    ui.clearToasts();
+    if (storyDirector.isBlocking()) ui.clearToasts();
+  },
+  onModalChange: blocking => {
+    for (const layer of hud) {
+      if (layer !== storyRoot) layer.inert = blocking || view.mode !== 'playing';
+    }
+    canvas.inert = blocking;
+    if (blocking) clearPointer();
+  },
+  onComplete: (sequence, reason) => {
+    if (sequence.id === 'intro_arrival' && (reason === 'completed' || reason === 'skipped')) {
+      ensureStoryState(world.state).seenEvents.intro_arrival = true;
+      saveActive();
+    }
+    if (sequence.followUp && (reason === 'completed' || (reason === 'skipped' && sequence.followOnSkip))) {
+      triggerStory(sequence.followUp);
+    }
   },
   onAction: (type, arg) => {
     if (type === 'open-menu') ui.setMenu(arg);
@@ -209,7 +236,7 @@ const menu = createMainMenu(title, {
   saves, preferences: settings, fullscreenSupported, applyPreference, enter: enterIsland, deleted: loadPreview,
   wipeAll: () => wipeAllAndRestart({ enterFresh: false }),
   sound, icon: assets.ui.GameUI.ic,
-  createDraft: slot => createIslandDraft(pristine, slot),
+  createDraft: () => createIslandDraft(pristine),
   portrait: appearance => svgUrl(assets.villager.svg({ config: { ...appearance, lifeStage: 'adult' } })),
 });
 
@@ -218,6 +245,7 @@ let pendingFirstFind;
 
 function updateFindPresentation() {
   if (pointer || pinchState || view.placementType) return;
+  if (pendingFindFocus && storyDirector.isAmbient()) storyDirector.close('interrupted');
   if (pendingFindFocus && !storyDirector.isActive()) {
     const { villagerId, position } = pendingFindFocus;
     if (world.collectibleReveals.has(villagerId)) {
@@ -263,8 +291,16 @@ function handleGameplayEvent(ev) {
     const key = `research_${ev.abilityId}`;
     if (!story.seenEvents[key]) {
       story.seenEvents[key] = true;
-      triggerStory('feature_research', ev);
+      const showMystery = !story.seenEvents.auron_mystery;
+      story.seenEvents.auron_mystery = true;
+      triggerStory('feature_research', { ...ev, showMystery });
     }
+  } else if (ev.type === 'building' && ['house', 'family_house'].includes(ev.building?.type) && !story.seenEvents.auron_care) {
+    story.seenEvents.auron_care = true;
+    triggerStory('tutorial_care');
+  } else if (ev.type === 'low_food' && !story.seenEvents.auron_low_food) {
+    story.seenEvents.auron_low_food = true;
+    triggerStory('tutorial_low_food');
   } else if (ev.type === 'collectible') {
     pendingFindFocus = ev;
     if (ev.firstEver && !story.seenEvents.first_collectible) {
@@ -398,13 +434,13 @@ function advanceEntry(dt) {
   const { offline, fresh } = entry;
   entry = null;
   setMode('playing');
+  auronCheckIns.reset();
   ui.refreshStatus();
   ui.refreshQuestTracker();
   if (devOnEntry) ui.setDebug(true);
   canvas.focus({ preventScroll: true });
   const story = ensureStoryState(world.state);
   if ((fresh || !story.seenEvents.intro_arrival) && !world.state.worldFlags.light_campfire) {
-    story.seenEvents.intro_arrival = true;
     triggerStory('intro_arrival');
   } else if (offline >= 10) {
     ui.notify('Your villagers continued their routines while you were away.');
@@ -460,7 +496,7 @@ document.addEventListener('visibilitychange', () => {
     hiddenAt = Date.now();
     saveActive(hiddenAt);
   } else if (hiddenAt !== null) {
-    advanceOffline(world, hiddenAt);
+    if (!storyDirector.isBlocking()) advanceOffline(world, hiddenAt);
     hiddenAt = null;
     saveActive();
   }
@@ -565,12 +601,12 @@ function touchGestureSnapshot() {
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
   event.preventDefault();
-  if (view.mode !== 'playing') return;
+  if (view.mode !== 'playing' || storyDirector.isBlocking()) return;
   cameraController.handleWheel(event, canvasPosition(event));
 }, { passive: false });
 
 canvas.addEventListener('pointerdown', event => {
-  if (view.mode !== 'playing') return;
+  if (view.mode !== 'playing' || storyDirector.isBlocking()) return;
   const start = canvasPosition(event);
   if (event.pointerType === 'touch') {
     touchPointers.set(event.pointerId, start);
@@ -664,13 +700,13 @@ window.addEventListener('keydown', event => {
     if (event.key === 'Escape' && view.mode === 'menu') menu.closePanel();
     return;
   }
-  if (storyDirector.isActive()) {
+  if (storyDirector.isActive() && (storyDirector.isBlocking() || storyRoot.contains(event.target))) {
     if (event.key === 'Escape') {
       event.preventDefault();
       storyDirector.close();
       return;
     }
-    if ((event.code === 'Space' || event.key === 'Enter') && !storyDirector.getState()?.waiting) {
+    if ((event.code === 'Space' || event.key === 'Enter') && !event.target.closest?.('button, input, select, textarea, a')) {
       event.preventDefault();
       storyDirector.advance();
       return;
@@ -730,8 +766,16 @@ function frame(now) {
   syncRenderCamera();
   wildlifeDirector.setView(cameraWorldRect(renderCamera, canvas.clientWidth, canvas.clientHeight));
   if (view.mode === 'menu') updateIslandPreview(world, dt);
-  else if (view.mode === 'playing') updateWorld(world, dt);
-  if (view.mode === 'playing') updateFindPresentation();
+  else if (view.mode === 'playing' && !storyDirector.isBlocking()) updateWorld(world, dt);
+  if (view.mode === 'playing') {
+    updateFindPresentation();
+    if (!world.state.time.paused && !storyDirector.isActive() && gameplayPanel.hidden
+      && !pointer && !pinchState && !view.placementType && !view.debug
+      && !pendingFirstFind && !world.collectibleReveals.size
+      && world.state.villagers.length) {
+      auronCheckIns.update(dt, world.state, storyDirector.play);
+    }
+  }
   if (view.drag) {
     updateDragPosition();
     if (now - lastPreview >= 55) {

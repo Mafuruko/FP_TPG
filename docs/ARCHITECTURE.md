@@ -38,6 +38,12 @@ The Resource Manager publishes changes to the shared counters. `src/gameplay.js`
 
 The lit campfire and completed buildings receive default glows. To attach a light to a map prop, add `glow: { preset: 'lantern', offset: { x: 2, y: -12 } }` to the object metadata in the Island Map Studio. A building instance can carry the same `glow` descriptor. Offsets are world pixels from the sprite anchor. Use `campfire`, `window`, `torch`, or `lantern` and optionally override `radius` and `intensity`. A `requiresFlag` value such as `'light_campfire'` gates the glow on a landmark flag. Set `glow: false` to opt out of the default building or campfire glow.
 
+## Auron dialogue and tutorials
+
+The original portrait renderer lives in `assets/island-guardian-studio.html`. Run `npm run export:guardian` after editing it to regenerate `src/guardian-art.js`, which the game loads with its other browser scripts. `src/story-ui.js` uses the Studio’s expressions, mouth frames, and blink state inside the existing wood-and-parchment UI. `src/dialogue-voice.js` synthesizes short Web Audio syllables. Punctuation pauses typing and speech, and settings save text speed, dialogue volume, and voice mute independently of each island.
+
+Define new dialogue entries in `src/auron-dialogue.js` and register gameplay triggers through `buildEventSequence` in `src/story.js` and `handleGameplayEvent` in `src/main.js`. Sequences supply an ID, a mode, and a list of beats with text, expression, and optional title or camera focus. Use `guide` for the compact panel during play, `story` for a paused scene, and `choice` for a paused prompt with response buttons. Guide beats can use `waitFor(world)` to advance after a map action. Choices may set a zero-based `next` beat index or end the sequence, and can provide `onChoose`. Sequence `onComplete` receives the world, dismissal reason, and closing choice ID. Use `followUp` to open another sequence when the current one finishes.
+
 ## Bird movement
 
 `src/birds.js` drives the Island Songbird and Seagull through `GROUNDED`, `TAKEOFF`, `FLYING` and `LANDING`. The world position tracks the point on the map below the bird. Altitude, vertical velocity and horizontal momentum live in the saved bird state. Landing and walking use walkable habitat tiles, while airborne movement can cross terrain outside that habitat. Older saves initialize birds on valid ground.

@@ -1,9 +1,12 @@
 const key = 'island-colony.settings.v1';
-const defaults = { master: 100, music: 100, sfx: 35, fullscreen: false, integer: false, lightning: false };
-const sliders = { master: 'Master volume', music: 'Music volume', sfx: 'SFX / Ambient volume' };
-const switches = { fullscreen: 'Fullscreen / Windowed', integer: 'Pixel-perfect integer scaling', lightning: 'Weather lightning flashes' };
+const defaults = { master: 100, music: 100, sfx: 35, voice: 40, voiceMute: false, dialogueSpeed: 'normal',
+  fullscreen: false, integer: false, lightning: false };
+const sliders = { master: 'Master volume', music: 'Music volume', sfx: 'SFX / Ambient volume', voice: 'Dialogue volume' };
+const switches = { voiceMute: 'Mute dialogue voice', fullscreen: 'Fullscreen / Windowed',
+  integer: 'Pixel-perfect integer scaling', lightning: 'Weather lightning flashes' };
+const textSpeeds = { slow: 'Slow', normal: 'Normal', fast: 'Fast', instant: 'Instant' };
 
-const minimum = name => name === 'sfx' ? 0 : 1;
+const minimum = name => name === 'sfx' || name === 'voice' ? 0 : 1;
 
 function percent(name, value) {
   return Math.max(minimum(name), Math.min(100, Math.round(value)));
@@ -25,6 +28,7 @@ export function loadPreferences(storage) {
   for (const name of Object.keys(switches)) {
     if (typeof saved?.[name] === 'boolean') result[name] = saved[name];
   }
+  if (Object.hasOwn(textSpeeds, saved?.dialogueSpeed)) result.dialogueSpeed = saved.dialogueSpeed;
   return result;
 }
 
@@ -43,16 +47,20 @@ export function renderPreferences(settings, fullscreenSupported) {
       <span>${label}</span><input type="checkbox" data-preference="${id}" ${settings[id] ? 'checked' : ''}
         ${id === 'fullscreen' && !fullscreenSupported ? 'disabled' : ''}>
     </label>`).join('');
-  return `<div class="island-preferences">${ranges}<div class="island-switches">${toggles}</div>
+  const speed = `<label class="island-switch"><span>Dialogue text speed</span>
+    <select class="gu-in" data-preference="dialogueSpeed">${Object.entries(textSpeeds).map(([id, label]) =>
+      `<option value="${id}" ${settings.dialogueSpeed === id ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`;
+  return `<div class="island-preferences">${ranges}<div class="island-switches">${speed}${toggles}</div>
     <p class="fullscreen-status" role="status">${fullscreenSupported ? '' : 'Fullscreen is unavailable in this browser.'}</p></div>`;
 }
 
 export function bindPreferences(root, apply) {
   root.addEventListener('input', event => {
-    const input = event.target.closest('input[data-preference]');
+    const input = event.target.closest('[data-preference]');
     if (!input) return;
     const name = input.dataset.preference;
     if (input.type === 'checkbox') apply(name, input.checked);
+    else if (input.tagName === 'SELECT') apply(name, input.value);
     else {
       input.parentElement.querySelector('output').value = `${input.value}%`;
       apply(name, Number(input.value));

@@ -1,12 +1,12 @@
-import { ATMOSPHERE_CONFIG, computeAtmosphere, drawAtmosphereOverlay, drawCloudShadows,
-  drawDistantLightning, drawNightLights, drawRain, drawWeatherParticles } from './atmosphere.js';
+import { ATMOSPHERE_CONFIG, computeAtmosphere, drawAtmosphereOverlay, drawCloudLayer,
+  drawDistantLightning, drawNightLights, drawRain, drawWeatherParticles, sampleClouds } from './atmosphere.js';
 import { tileToWorld, worldToTile } from './geometry.js';
 import { birdVisuals } from './birds.js';
 import { dolphinVisuals } from './dolphin.js';
 import { fishVisuals, waterAt } from './fish.js';
 import { contactVisual, groundPosition, villagerFrame } from './ground.js';
 import { turtleVisuals } from './turtle.js';
-import { jobVisual, recolorSvgToGold } from './villagers.js';
+import { jobVisual, recolorSvgToGold, villagerBlink, villagerExpression } from './villagers.js';
 import { wildlifeOpacity } from './wildlife-director.js';
 import { findBestDragOrigin, STORY_CONFIG } from './story.js';
 import { smooth } from './climate.js';
@@ -141,7 +141,7 @@ export function createRenderer(canvas, world, camera, view) {
     if (!options) return asset.id;
     const cfg = options.config;
     const cfgKey = cfg
-      ? [cfg.seed, cfg.lifeStage, cfg.heldObject, cfg.expression, cfg.bodyStyle, cfg.skinTone,
+      ? [cfg.seed, cfg.lifeStage, cfg.heldObject, cfg.expression, cfg.blinking, cfg.bodyStyle, cfg.skinTone,
         cfg.hairStyle, cfg.hairColor, cfg.clothingStyle, cfg.primaryColor, cfg.secondaryColor, cfg.accessories?.join(',')].join('|')
       : '';
     return `${asset.id}|${cfgKey}|${options.direction ?? ''}|${options.animation ?? ''}|${options.frame ?? ''}|${options.shadow ?? ''}|${options.rank ?? ''}|${options.golden ? 'gold' : ''}`;
@@ -257,11 +257,14 @@ export function createRenderer(canvas, world, camera, view) {
 
   function villagers() {
     return state.villagers.map(entity => {
-      const config = { ...entity.appearance, name: entity.name, lifeStage: entity.lifeStage };
+      const config = {
+        ...entity.appearance, name: entity.name, lifeStage: entity.lifeStage,
+        expression: villagerExpression(entity, state.time.seconds),
+        blinking: villagerBlink(entity, state.time.seconds),
+      };
       const reveal = view.mode === 'playing' && world.collectibleReveals?.get(entity.id);
       const { animations } = assets.villager;
-      const animation = reveal ? ['collectLift', 'pickup', 'idle'].find(clip => animations[clip]) : entity.animation;
-      if (reveal) config.expression = 'surprised';
+      const animation = reveal ? 'collectLift' : entity.animation;
       const definition = animations[animation];
       const skill = jobVisual(entity);
       const tier = skill?.tier ?? 0;
@@ -269,7 +272,7 @@ export function createRenderer(canvas, world, camera, view) {
       const fps = assets.characterFps(animation, config) / (skill && entity.work.phase === 'work' ? skill.rank.workTime : 1);
       const grab = entity.work?.job === 'collect' && entity.work.phase === 'work';
       const grabDuration = entity.work?.grabDuration ?? 3.2;
-      const frame = reveal ? Math.min(Math.floor(reveal.age * 9), definition.frameCount - 1)
+      const frame = reveal ? Math.min(Math.floor(reveal.age * definition.fps), definition.frameCount - 1)
         : grab ? Math.max(0, Math.min(Math.floor((1 - entity.work.remaining / grabDuration) * definition.frameCount), definition.frameCount - 1))
           : villagerFrame(entity, definition.frameCount) ?? frameAt({ ...definition, fps }, state.time.seconds);
       const sprite = describeSprite(entity, assets.villager, {
@@ -531,7 +534,7 @@ export function createRenderer(canvas, world, camera, view) {
     const definition = animations[animation];
     const frame = frameAt(definition, Math.max(0, performance.now() - startedAt) / 1000);
     paintSprite(describeSprite(sprite.entity, sprite.asset, {
-      ...sprite.options, config: { ...sprite.options.config, heldObject: 'none' },
+      ...sprite.options, config: { ...sprite.options.config, heldObject: 'none', blinking: false },
       animation, frame, direction: 'front', rank: 0,
     }, { x: Math.round(position.x), y: Math.round(position.y) - 8 }));
   }
@@ -638,6 +641,7 @@ export function createRenderer(canvas, world, camera, view) {
       if (sw > 0 && sh > 0) context.drawImage(terrainSource, sx, sy, sw, sh, sx, sy, sw, sh);
     }
     const atmosphere = computeAtmosphere(state.time.minutes, state.weather, state.time.seconds);
+    const clouds = sampleClouds(map.meta, atmosphere, state.time.seconds, camera.zoom);
     hits = [];
     const scenery = objects(bounds);
     const villagersOnMap = villagers();
@@ -692,8 +696,9 @@ export function createRenderer(canvas, world, camera, view) {
     drawFishingActivity(bounds);
     drawFishParticles(true);
     for (const sprite of animals) if (overCanopy(sprite)) paintSprite(sprite, bounds);
-    drawCloudShadows(context, map, bounds, atmosphere, state.time.seconds);
+    drawCloudLayer(context, clouds, bounds, 'shadow');
     drawWeatherParticles(context, map, bounds, atmosphere, state.time.seconds);
+    drawCloudLayer(context, clouds, bounds, 'body');
     drawAtmosphereOverlay(context, width, height, atmosphere);
     drawNightLights(context, world, atmosphere, bounds);
     drawRain(context, width, height, state.time.seconds, scale, atmosphere);

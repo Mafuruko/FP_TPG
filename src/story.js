@@ -1,4 +1,5 @@
 import { describeInteraction } from './assets.js';
+import { buildAuronSequence } from './auron-dialogue.js';
 import { tileToWorld } from './geometry.js';
 import { landmarks, researchProjects } from './progression.js';
 import { skillProgress, villagerSkills } from './villagers.js';
@@ -135,13 +136,14 @@ export function landmarkAnchor(world, puzzleId) {
   return obj.anchor ? { x: obj.anchor.x, y: obj.anchor.y } : tileToWorld(obj.tile, world.map.meta.tileSize);
 }
 
-export function findNearestResource(world, counter) {
+export function findNearestResource(world, counter, type) {
   const camp = world.map.objects.find(o => o.type === 'campfire_site');
   const origin = camp?.anchor || tileToWorld(world.map.villagerSpawns[2], world.map.meta.tileSize);
   let best = null;
   let bestDist = Infinity;
   for (const obj of world.map.objects) {
     if (!obj.resource) continue;
+    if (type && obj.type !== type) continue;
     if ((world.state.objects[obj.id]?.amount ?? 0) <= 0) continue;
     const interaction = describeInteraction(obj, world.assets);
     if (interaction.counter !== counter) continue;
@@ -959,51 +961,16 @@ const RESEARCH_GUIDE_BEATS = {
 
 export function buildEventSequence(eventId, payload, world) {
   const campPos = landmarkAnchor(world, 'light_campfire');
-  const springPos = landmarkAnchor(world, 'unblock_spring');
   const monumentPos = landmarkAnchor(world, 'restore_monument');
   const villagePos = tileToWorld(world.map.villagerSpawns[2], world.map.meta.tileSize);
-  const nearestTree = findNearestResource(world, 'wood');
+  if (eventId === 'intro_arrival' || eventId.startsWith('tutorial_')) {
+    return buildAuronSequence(eventId, {
+      camp: campPos, village: villagePos, wood: findNearestResource(world, 'wood')?.position,
+      food: (findNearestResource(world, 'food', 'berry_bush') ?? findNearestResource(world, 'food'))?.position,
+    });
+  }
 
   switch (eventId) {
-    case 'intro_arrival':
-      return {
-        id: 'intro_arrival',
-        tone: 'story',
-        pauseWorld: false,
-        beats: [
-          {
-            title: 'Step 1: Chop Wood',
-            icon: 'work',
-            text: 'Drag an adult onto the circled tree to gather 4 Wood.',
-            focus: nearestTree?.position || campPos,
-            zoom: 2.55,
-            beaconLabel: 'Drop Adult Here',
-            dragFrom: 'adult',
-            waitFor: w => w.state.resources.wood >= 4
-              || Boolean(w.state.worldFlags.light_campfire)
-              || w.state.villagers.some(v => v.work?.job === 'chop'),
-          },
-          {
-            title: 'Step 2: Light the Campfire',
-            icon: 'work',
-            text: 'With 4 Wood, drop an adult onto the stone campfire ring.',
-            focus: campPos,
-            zoom: 2.6,
-            beaconLabel: 'Light Campfire (4W)',
-            dragFrom: 'adult',
-            waitFor: w => Boolean(w.state.worldFlags.light_campfire),
-          },
-          {
-            title: 'Step 3: Clear the Spring Next',
-            icon: 'build',
-            text: 'Gather 5 Stone and drop an adult on this blocked spring.',
-            focus: springPos,
-            zoom: 2.35,
-            beaconLabel: 'Next: Spring (5S)',
-          },
-        ],
-      };
-
     case 'first_illness': {
       const v = payload?.villager || world.state.villagers[0];
       const name = v?.name || 'A villager';
@@ -1101,7 +1068,7 @@ export function buildEventSequence(eventId, payload, world) {
       return {
         id: 'first_old_age_death',
         tone: 'milestone',
-        pauseWorld: true,
+        mode: 'guide',
         beats: [
           {
             title: `${name} Passed at Age ${age}`,
@@ -1123,7 +1090,7 @@ export function buildEventSequence(eventId, payload, world) {
       return {
         id: 'first_birth',
         tone: 'milestone',
-        pauseWorld: true,
+        mode: 'guide',
         beats: [
           {
             title: `Welcome, Baby ${babyName}!`,
@@ -1173,7 +1140,8 @@ export function buildEventSequence(eventId, payload, world) {
           action: { label: 'Open Challenges', type: 'open-menu', arg: 'achievements' },
         });
       }
-      return { id: `landmark_${puzzleId}`, tone: 'milestone', pauseWorld: true, beats };
+      return { id: `landmark_${puzzleId}`, tone: 'milestone', mode: 'guide', beats,
+        followUp: puzzleId === 'light_campfire' ? 'tutorial_shelter' : undefined };
     }
 
     case 'feature_research': {
@@ -1187,6 +1155,7 @@ export function buildEventSequence(eventId, payload, world) {
         : (world.state.villagers.find(v => v.illness || v.needs.health < 70)?.position || campPos);
       return {
         id: `guide_research_${abilityId}`,
+        followUp: payload?.showMystery ? 'tutorial_mystery' : undefined,
         tone: 'guide',
         pauseWorld: false,
         beats: [
@@ -1210,7 +1179,7 @@ export function buildEventSequence(eventId, payload, world) {
       return {
         id: 'first_collectible',
         tone: 'guide',
-        pauseWorld: false,
+        mode: 'guide',
         beats: [
           {
             title: `Found: ${name}`,
@@ -1225,6 +1194,7 @@ export function buildEventSequence(eventId, payload, world) {
     case 'colony_lost':
       return {
         id: 'colony_lost',
+        mode: 'choice',
         tone: 'danger',
         pauseWorld: true,
         colonyLost: true,

@@ -326,3 +326,180 @@ This document records Naufy’s Island Colony changes from the first playable vi
 1. Open **Islands → Start New Island**. Check that the panel is centered and both portraits have clear labels.
 2. Try a narrow window and check that the cards stack and can be scrolled.
 3. Start the island and select each founder to check the profile label.
+
+---
+
+## Patch 18 — Stormbay Island and Visual Villager Options
+
+**Files**
+
+`src/island-setup.js`, `src/main-menu.js`, `src/main.js`, `game.css`, `tests/features.test.js`
+
+### Summary
+
+- New islands start with the editable name Stormbay Island.
+- Body, skin, hair, clothing, and accessories now open a set of selectable SVG thumbnails from the existing villager art. The selected image updates the founder’s live portrait.
+
+### What to check
+
+1. Open a new island. Confirm the name starts at Stormbay Island and that you can replace it.
+2. Open Hair Style or Clothing, pick a thumbnail, and check that the main portrait and the selected thumbnail update.
+3. Start the island and reload it to verify the chosen name and appearance are saved.
+
+---
+
+## Patch 19 — Auron Dialogue and the Two-Survivor Opening
+
+**Files**
+
+`tools/studios.js`, `src/auron-dialogue.js`, `src/dialogue-voice.js`, `src/story.js`, `src/story-ui.js`, `src/main.js`, `src/preferences.js`, `src/main-menu.js`, `game.css`, `docs/ARCHITECTURE.md`, `tests/features.test.js`
+
+### Summary
+
+- Connected the original Island Guardian Studio portraits to Auron’s dialogue, including expressions, blinks, and changing mouth frames.
+- Added a paused opening about two survivors, compact guides for food, wood, shelter, care and research, and a branching mystery prompt.
+- Added soft synthesized speech, adjustable text speed, dialogue volume, and a saved voice mute setting.
+
+### What to check
+
+1. Start a new island. Check that Auron’s opening pauses the village and that his portrait changes as you advance.
+2. Finish or skip the opening. Drop a villager on the berries during the compact food guide and check that the wood hint follows.
+3. Unlock a research ability and finish its guide. Try both responses to Auron’s first mystery prompt.
+4. Open Settings and change dialogue text speed, volume, or mute. Check that the preferences persist after reloading.
+
+---
+
+## Patch 20 — Load Auron’s Face on Running Servers
+
+**Files**
+
+`src/guardian-art.js`, `src/main.js`, `tools/studios.js`, `tools/export-guardian.js`, `package.json`, `tests/features.test.js`, `docs/ARCHITECTURE.md`
+
+### Summary
+
+- The game loads Auron’s original Studio artwork through the existing game-script route, which works on a server already running the game.
+- Added `npm run export:guardian` to regenerate the browser module from the Studio HTML. A test checks that the generated module matches its source.
+
+### What to check
+
+1. Refresh the game with the development server running, then start a new island.
+2. Check that Auron’s face appears and changes expression as the dialogue progresses.
+
+---
+
+## Patch 21 — Island Colony Typography
+
+**Files**
+
+`game.css`, `src/main.js`
+
+### Summary
+
+- Applied Pixelify Sans to headings, Silkscreen to tabs and small labels, and Nunito Sans to body text, buttons, and Auron’s dialogue.
+- Recalculate the floating HUD’s dimensions when the browser loads its web fonts.
+
+### What to check
+
+1. Open the island setup screen, Settings, and the in-game HUD. Compare headings, tabs, and button labels.
+2. Start a new island and check that Auron’s dialogue uses larger body text with more line spacing.
+
+---
+
+## Patch 22 — Tidier Menu and Dialogue Layouts
+
+**Files**
+
+`game.css`, `src/main-menu.js`, `src/story-ui.js`
+
+### Summary
+
+- Refined heading and button spacing with the existing font families, aligned Settings controls, and let long island names wrap.
+- Opened founder appearance choices in a thumbnail tray that keeps both cards aligned. Choosing an option closes the tray and returns focus to its control.
+- Moved Auron’s dialogue progress into the footer and let the dialogue text use the full card width on phones.
+- Aligned the Collection Book categories in two even rows and gave their counts a consistent type style.
+
+### What to check
+
+1. Open Settings and check that the percentages, dropdown, and checkboxes line up.
+2. Open the Hair style and Accessory pickers for both founders. Choose a thumbnail and check that the preview updates and the other founder card stays in place.
+3. Start an island at desktop and phone widths. Check that the dialogue text has space to wrap and the progress and buttons appear below it.
+4. Open the Collection Book and check that the four categories fit in two rows.
+
+---
+
+## Patch 23 — Occasional Auron Check-ins
+
+**Files**
+
+`src/auron-dialogue.js`, `src/story-ui.js`, `src/main.js`, `game.css`, `tests/features.test.js`
+
+### Summary
+
+- Added a dozen short remarks with Auron’s dry jokes, island facts, old memories, and friendly check-ins. Rain and nighttime unlock their own lines.
+- The first remark can appear after 90–150 seconds of quiet play. Later remarks wait 4–7 minutes, and each island remembers which lines it has heard.
+- Check-ins leave the camera and simulation alone, close automatically after the line has been readable for 13 seconds, and make way for tutorials and important events.
+
+### What to check
+
+1. Finish the opening and tutorial prompts, then play with the side panels closed. Look for an occasional Auron card while the villagers keep working.
+2. Close the card yourself or let it disappear. Check that subsequent remarks vary and that opening a story prompt takes priority.
+
+---
+
+## Patch 24 — Compact Bottom Dialogue
+
+**Files**
+
+`game.css`, `src/story-ui.js`, `src/story.js`, `src/main.js`, `tests/features.test.js`
+
+### Summary
+
+- Reserved the dimmed, centered layout for story scenes and story choices, including the colony ending.
+- Moved birth, old-age, collectible, and landmark updates into bottom cards alongside tutorial hints. The island stays interactive while these cards are open.
+- Made Auron’s facts and jokes more compact with a smaller portrait and a close button. They dismiss ten seconds after the text finishes appearing.
+
+### What to check
+
+1. Start a new island and check that Auron’s opening still dims the island. Dismiss it and check that the first tip sits at the bottom while the map remains interactive.
+2. Find a first collectible or complete a landmark. Check that its update appears at the bottom and you can keep playing.
+3. Let an Auron fact appear on desktop and phone widths. Check its position and automatic dismissal.
+
+---
+
+## Patch 25 — More Expressive Villagers
+
+**Files**
+
+`assets/Villager Character Studio.html`, `src/villagers.js`, `src/render.js`, `src/ui.js`, `tests/foundation.test.js`
+
+### Summary
+
+- Villager faces now follow their current activity and reactions. They smile during conversations, concentrate at work, look tired when low on energy, and react to scares or confusing drops.
+- Added brief blinks at different times for each villager. Older saves with a surprised portrait now show a relaxed portrait and use the same activity-driven faces in the world.
+- Picked-up villagers still look surprised. When they lift a collectible, their surprised face turns into a smile as they show it off.
+
+### What to check
+
+1. Load an existing island and watch villagers idle, talk, and work. Look for different facial expressions and occasional blinks.
+2. Pick up a villager, drop them on empty ground, and watch their expression settle once the reaction ends.
+3. Assign a villager to grab a collectible and watch their expression as they raise it overhead.
+
+---
+
+## Patch 26 — Drifting Sky Clouds
+
+**Files**
+
+`src/atmosphere.js`, `src/render.js`, `tests/features.test.js`
+
+### Summary
+
+- Added drifting pixel clouds above the island and ocean, with stepped shading and matching shadows beneath them.
+- Cloud bodies fade into view as you zoom out. At close range, their shadows can still pass over the island.
+- Clear skies have scattered clouds. The weather blend adds more as the sky turns overcast, and the sun shifts and softens their shadows through the day.
+
+### What to check
+
+1. Use **Fit to map** in the camera toolbar or zoom out with the mouse wheel. Watch the clouds and their shadows drift across the island.
+2. Zoom back in and check that the cloud bodies fade while the shadows remain visible.
+3. Compare clear weather with heavy rain and look for the change in cloud cover.
